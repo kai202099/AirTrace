@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset": "AQX_P_186",
+  "status": "BOUNDED_REQUEST_FAILED",
+  "dataset_complete": false,
+  "started_at_utc": "2026-09-03T00:07:21Z",
+  "last_attempt_offset": 1036000,
+  "db_rows_loaded": 1000000,
+  "unique_cno_loaded": 107,
+  "raw_snapshot_file_count": 1110,
+  "reason": "Prior bounded ingest reached the configured pagination cap; continuation attempts at offset 1036000 ended with MOENV ReadTimeout.",
+  "selection_semantics": "Partial snapshot retained for Evidence Fusion supporting context only; no completeness claim."
+}

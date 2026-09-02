@@ -29,6 +29,7 @@ DEFAULT_TRACE = ROOT / "reports" / "source_trace" / "latest_source_trace.json"
 DEFAULT_OUTPUT = ROOT / "reports" / "evidence"
 DEFAULT_FACILITIES = ROOT / "data" / "facilities.duckdb"
 DEFAULT_CEMS = ROOT / "data" / "cems.duckdb"
+DEFAULT_CEMS_METADATA = ROOT / "data" / "cems_ingest_metadata.json"
 DEFAULT_REGION = ROOT / "config" / "pilot_region.json"
 load_dotenv(ROOT / ".env")
 
@@ -72,7 +73,14 @@ def _firms_bbox(trace: dict, buffer_km: float = 10.0) -> dict[str, float] | None
 
 def fetch_firms(trace: dict, map_key: str, window_hours: float) -> tuple[list, dict]:
     bbox = _firms_bbox(trace, 10.0)
-    diagnostics = {"requested": bool(map_key and bbox), "bbox_named": bbox, "bbox_api_order": None, "dates": _query_dates(trace, window_hours), "sources": {}, "errors": []}
+    event_time = _event_time(trace)
+    # The Area API currently accepts a bounded recent day range (1..5), not an
+    # ISO date path. Fetch the smallest range covering the event window, then
+    # apply the UTC event-window filter locally. Older historical events need
+    # a different FIRMS endpoint and are not guessed here.
+    day_range = max(1, min(5, int(window_hours / 24) + 1))
+    queries = [day_range]
+    diagnostics = {"requested": bool(map_key and bbox), "bbox_named": bbox, "bbox_api_order": None, "queries": queries, "event_time_utc": event_time.isoformat().replace("+00:00", "Z") if event_time else None, "temporal_filter_hours": window_hours, "sources": {}, "errors": []}
     if not map_key:
         diagnostics["errors"].append("FIRMS_MAP_KEY is not set; no FIRMS query performed")
         return [], diagnostics
@@ -85,13 +93,17 @@ def fetch_firms(trace: dict, map_key: str, window_hours: float) -> tuple[list, d
     for source in DEFAULT_SOURCES:
         source_rows = []
         try:
-            for query in diagnostics["dates"]:
-                source_rows.extend(client.fetch_detections(source, bbox, query))
+            source_rows.extend(client.fetch_detections(source, bbox, day_range))
+            if event_time is not None:
+                lower, upper = event_time - timedelta(hours=window_hours), event_time + timedelta(hours=window_hours)
+                source_rows = [row for row in source_rows if lower <= row.acquisition_time_utc <= upper]
             detections.extend(source_rows)
-            diagnostics["sources"][source] = {"detections": len(source_rows), "queries": len(diagnostics["dates"])}
+            diagnostics["sources"][source] = {"detections": len(source_rows), "queries": 1, "day_range": day_range}
         except Exception as exc:
-            diagnostics["sources"][source] = {"detections": len(source_rows), "queries": len(diagnostics["dates"])}
+            diagnostics["sources"][source] = {"detections": len(source_rows), "queries": 1, "day_range": day_range}
             diagnostics["errors"].append(f"{source}: {exc}")
+    if event_time is not None and day_range == 5:
+        diagnostics["errors"].append("Area API is limited to recent day ranges; events older than the returned range require a historical FIRMS endpoint and are not claimed complete")
     return detections, diagnostics
 
 
@@ -126,7 +138,8 @@ def main() -> int:
     report["data_sources"] = {"facilities_db": str(args.facilities_db), "cems_db": str(args.cems_db), "firms": "NASA FIRMS Area API"}
     report["firms_query_diagnostics"] = firms_diagnostics
     cems_raw_files = list((ROOT / "data" / "raw" / "cems").rglob("*.json.gz")) if (ROOT / "data" / "raw" / "cems").exists() else []
-    report["cems_ingestion_diagnostics"] = {"db_rows_loaded": len(cems), "raw_snapshot_file_count": len(cems_raw_files), "note": "CEMS raw ingest is not considered complete unless the API reaches an empty page; a prior run may have stopped on timeout/pagination cap."}
+    cems_metadata = _read_json(DEFAULT_CEMS_METADATA) if DEFAULT_CEMS_METADATA.exists() else None
+    report["cems_ingestion_diagnostics"] = {"db_rows_loaded": len(cems), "raw_snapshot_file_count": len(cems_raw_files), "metadata": cems_metadata, "note": "CEMS raw ingest is not considered complete unless the API reaches an empty page; partial data remains valid supporting context."}
     if not facilities:
         report.setdefault("limitations", []).append("Facility DB is empty or unavailable; run scripts/fetch_facilities.py first.")
     if not cems:

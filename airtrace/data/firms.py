@@ -107,7 +107,10 @@ class FirmsClient:
             response = self.session.get(url, timeout=self.timeout_seconds)
             response.raise_for_status()
         except requests.RequestException as exc:
-            raise FirmsError(f"FIRMS request failed: {type(exc).__name__}") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            body = getattr(getattr(exc, "response", None), "text", "")
+            detail = f"HTTP {status}: {str(body).strip()[:200]}" if status is not None else type(exc).__name__
+            raise FirmsError(f"FIRMS request failed: {detail}") from exc
         text = response.text
         if text.lstrip().startswith("Invalid") or text.lstrip().startswith("Error"):
             raise FirmsError(text.strip()[:300])
