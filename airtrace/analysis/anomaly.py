@@ -609,6 +609,66 @@ def detect_anomalies(
     return DetectionResult(payload=payload, rows=rows, context_sensors=context_rows)
 
 
+def latest_observation_time(database_path: Path) -> datetime:
+    """Return the latest PM2.5 timestamp using a read-only connection."""
+
+    try:
+        connection = duckdb.connect(str(database_path), read_only=True)
+    except Exception as exc:
+        raise RuntimeError(f"READ_ONLY_ACCESS_FAILED: could not open {database_path}: {exc}") from exc
+    try:
+        value = connection.execute("SELECT max(phenomenon_time_utc) FROM pm25_observation").fetchone()[0]
+    finally:
+        connection.close()
+    if value is None:
+        raise ValueError("no PM2.5 observations available")
+    return utc_datetime(value)
+
+
+def detect_anomalies_range(
+    database_path: Path,
+    config_path: Path,
+    start_time: datetime,
+    end_time: datetime,
+    lookback_hours: float = 2.0,
+    config: AnomalyConfig = AnomalyConfig(),
+    now: datetime | None = None,
+) -> list[DetectionResult]:
+    """Evaluate the unchanged v1 detector once per analysis bin in a range.
+
+    Each result is still the regular sensor-level v1 report.  The range helper
+    only supplies deterministic bin cutoffs and never changes candidate math.
+    The one-bin-minus-a-microsecond cutoff includes all observations in a bin
+    without future-filling it from the next bin.
+    """
+
+    start_time = utc_datetime(start_time)
+    end_time = utc_datetime(end_time)
+    if end_time < start_time:
+        raise ValueError("end_time must be at or after start_time")
+    if lookback_hours <= 0:
+        raise ValueError("lookback_hours must be positive")
+    first_bin = floor_time(start_time, config.bin_minutes)
+    last_bin = floor_time(end_time, config.bin_minutes)
+    step = timedelta(minutes=config.bin_minutes)
+    stable_now = utc_datetime(now or datetime.now(UTC))
+    results: list[DetectionResult] = []
+    current_bin = first_bin
+    while current_bin <= last_bin:
+        cutoff = current_bin + step - timedelta(microseconds=1)
+        results.append(detect_anomalies(
+            database_path=database_path,
+            config_path=config_path,
+            cutoff=cutoff,
+            latest=False,
+            lookback_hours=lookback_hours,
+            config=config,
+            now=stable_now,
+        ))
+        current_bin += step
+    return results
+
+
 def write_json(result: DetectionResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result.payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
