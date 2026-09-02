@@ -14,6 +14,7 @@ import html
 import json
 import math
 import random
+import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ from airtrace.analysis.wind import (
     WindEstimate,
     get_wind,
     load_wind_snapshot,
+    load_wind_snapshot_range,
     parse_query_time,
 )
 
@@ -54,6 +56,13 @@ class BacktraceConfig:
     peak_threshold_fraction: float = 0.60
     display_trajectory_limit: int = 120
     subgrid_diffusion_mps: float = 0.0
+    wind_cache_enabled: bool = True
+    wind_cache_spatial_m: float = 250.0
+    wind_cache_temporal_seconds: int = 60
+    # Exact-coordinate caching is the safe default; spatial quantization is an
+    # explicit performance/accuracy tradeoff for benchmark or high-throughput use.
+    wind_cache_quantized: bool = False
+    profile: bool = False
     wind_config: WindConfig = field(default_factory=WindConfig)
     # Test/manual injection point.  None means the production path.
     wind_getter: Callable[..., Any] | None = field(default=None, repr=False, compare=False)
@@ -71,6 +80,8 @@ class BacktraceConfig:
             raise ValueError("v1 supports seed_mode='first' only")
         if not 0 < self.peak_threshold_fraction <= 1:
             raise ValueError("peak_threshold_fraction must be in (0, 1]")
+        if self.wind_cache_spatial_m <= 0 or self.wind_cache_temporal_seconds < 1:
+            raise ValueError("wind cache resolution must be positive")
 
 
 def _config(value: BacktraceConfig | Mapping[str, Any] | None) -> BacktraceConfig:
@@ -145,10 +156,14 @@ class _Extent:
     east: float
     south: float
     north: float
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
 
     def contains(self, x: float, y: float, projection: LocalMetricProjection) -> bool:
-        lat, lon = projection.inverse(x, y)
-        return self.south <= lat <= self.north and self.west <= lon <= self.east
+        del projection
+        return self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y
 
 
 @dataclass(frozen=True)
@@ -196,6 +211,13 @@ class _ResidualSampler:
         self.rows = list(rows)
         self.rng = rng
         self.usage: dict[str, int] = defaultdict(int)
+        self._by_distance: dict[str, list[_Residual]] = defaultdict(list)
+        self._by_quality: dict[str, list[_Residual]] = defaultdict(list)
+        self._exact: dict[tuple[str, str], list[_Residual]] = defaultdict(list)
+        for row in self.rows:
+            self._by_distance[row.distance_bucket].append(row)
+            self._by_quality[row.quality].append(row)
+            self._exact[(row.distance_bucket, row.quality)].append(row)
 
     def sample(self, estimate: Any) -> tuple[float, float, str]:
         if not self.rows:
@@ -203,15 +225,15 @@ class _ResidualSampler:
             return 0.0, 0.0, "none"
         distance = distance_bucket(_get_value(estimate, "nearest_station_km"))
         quality = str(_get_value(estimate, "quality_category") or "").upper()
-        exact = [row for row in self.rows if row.distance_bucket == distance and row.quality == quality]
+        exact = self._exact.get((distance, quality), [])
         if exact:
             source, pool = "exact_bucket", exact
         else:
-            pool = [row for row in self.rows if row.distance_bucket == distance]
+            pool = self._by_distance.get(distance, [])
             if pool:
                 source = "distance_fallback"
             else:
-                pool = [row for row in self.rows if row.quality == quality]
+                pool = self._by_quality.get(quality, [])
                 if pool:
                     source = "quality_fallback"
                 else:
@@ -228,30 +250,82 @@ def _get_value(value: Any, name: str, default: Any = None) -> Any:
 
 
 class _WindResolver:
-    def __init__(self, config: BacktraceConfig, projection: LocalMetricProjection) -> None:
+    def __init__(
+        self,
+        config: BacktraceConfig,
+        projection: LocalMetricProjection,
+        snapshot_start: datetime | None = None,
+        snapshot_end: datetime | None = None,
+    ) -> None:
         self.config = config
         self.projection = projection
         self.custom = config.wind_getter is not None
         self.snapshot_cache: dict[datetime, Any] = {}
+        self.wind_cache: dict[tuple[int | float, int | float, datetime], Any] = {}
+        self.snapshot: Any | None = None
         self.estimate_count = 0
+        self.wind_computation_count = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
         self.unavailable_count = 0
         self.quality_counts: dict[str, int] = defaultdict(int)
         self.arrows: list[dict[str, Any]] = []
+        self.timings: dict[str, float] = defaultdict(float)
+        if not self.custom and config.wind_cache_enabled and snapshot_start is not None and snapshot_end is not None:
+            self.snapshot = load_wind_snapshot_range(
+                config.database_path, snapshot_start, snapshot_end, config.wind_config, metrics=self.timings,
+            )
+
+    def _cache_key(self, x: float, y: float, at: datetime) -> tuple[int | float, int | float, datetime]:
+        spatial = self.config.wind_cache_spatial_m
+        seconds = self.config.wind_cache_temporal_seconds
+        epoch = math.floor(at.timestamp() / seconds) * seconds
+        if not self.config.wind_cache_quantized:
+            return round(x, 6), round(y, 6), datetime.fromtimestamp(epoch, tz=UTC)
+        return math.floor(x / spatial), math.floor(y / spatial), datetime.fromtimestamp(epoch, tz=UTC)
+
+    def _cached_query(self, key: tuple[int | float, int | float, datetime]) -> tuple[float, float, datetime]:
+        if self.config.wind_cache_quantized:
+            x = (key[0] + 0.5) * self.config.wind_cache_spatial_m
+            y = (key[1] + 0.5) * self.config.wind_cache_spatial_m
+        else:
+            x, y = float(key[0]), float(key[1])
+        lat, lon = self.projection.inverse(x, y)
+        return lat, lon, key[2]
 
     def estimate(self, lat: float, lon: float, at: datetime) -> Any:
         self.estimate_count += 1
-        if self.custom:
-            estimate = self.config.wind_getter(lat, lon, at)  # type: ignore[misc]
+        x, y = self.projection.project(lat, lon)
+        cache_key = self._cache_key(x, y, at) if self.config.wind_cache_enabled else None
+        if cache_key is not None and cache_key in self.wind_cache:
+            self.cache_hits += 1
+            estimate = self.wind_cache[cache_key]
         else:
-            # One immutable read-only snapshot per minute preserves the
-            # production interpolation semantics without opening DuckDB once
-            # per particle step.
-            key = at.replace(second=0, microsecond=0)
-            snapshot = self.snapshot_cache.get(key)
-            if snapshot is None:
-                snapshot = load_wind_snapshot(self.config.database_path, key, self.config.wind_config)
-                self.snapshot_cache[key] = snapshot
-            estimate = get_wind(lat, lon, key, database_path=self.config.database_path, config=self.config.wind_config, snapshot=snapshot)
+            if cache_key is not None:
+                self.cache_misses += 1
+                query_lat, query_lon, query_time = self._cached_query(cache_key)
+            else:
+                query_lat, query_lon = lat, lon
+                query_time = at if self.custom else at.replace(second=0, microsecond=0)
+            computation_started = time.perf_counter()
+            if self.custom:
+                estimate = self.config.wind_getter(query_lat, query_lon, query_time)  # type: ignore[misc]
+            elif self.snapshot is not None:
+                estimate = get_wind(query_lat, query_lon, query_time, database_path=self.config.database_path, config=self.config.wind_config, snapshot=self.snapshot)
+            else:
+                # Strict/reference mode keeps v1's per-minute immutable snapshot behavior.
+                snapshot = self.snapshot_cache.get(query_time)
+                if snapshot is None:
+                    snapshot = load_wind_snapshot(
+                        self.config.database_path, query_time, self.config.wind_config,
+                        metrics=self.timings, temporal_cache_enabled=False,
+                    )
+                    self.snapshot_cache[query_time] = snapshot
+                estimate = get_wind(query_lat, query_lon, query_time, database_path=self.config.database_path, config=self.config.wind_config, snapshot=snapshot)
+            self.timings["wind_computation_seconds"] += time.perf_counter() - computation_started
+            self.wind_computation_count += 1
+            if cache_key is not None:
+                self.wind_cache[cache_key] = estimate
         u = _get_value(estimate, "u_east_mps")
         v = _get_value(estimate, "v_north_mps")
         quality = str(_get_value(estimate, "quality_category") or "UNKNOWN")
@@ -259,6 +333,43 @@ class _WindResolver:
         if not _finite(u) or not _finite(v):
             self.unavailable_count += 1
         return estimate
+
+    def performance(self, runtime_seconds: float, receptor_count: int, particle_count: int, total_steps: int) -> dict[str, Any]:
+        return {
+            "runtime_seconds": round(runtime_seconds, 6),
+            "receptor_count": receptor_count,
+            "particle_count": particle_count,
+            "integration_steps": total_steps * particle_count,
+            "particle_steps_per_second": round((total_steps * particle_count) / runtime_seconds, 3) if runtime_seconds > 0 else None,
+            "wind_estimate_requests": self.estimate_count,
+            "wind_computations": self.wind_computation_count,
+            "wind_computations_avoided": self.estimate_count - self.wind_computation_count,
+            "wind_cache": {
+                "enabled": self.config.wind_cache_enabled,
+                "spatial_resolution_m": self.config.wind_cache_spatial_m,
+                "quantized": self.config.wind_cache_quantized,
+                "temporal_resolution_seconds": self.config.wind_cache_temporal_seconds,
+                "hits": self.cache_hits,
+                "misses": self.cache_misses,
+                "hit_rate": round(self.cache_hits / max(1, self.cache_hits + self.cache_misses), 9),
+                "entries": len(self.wind_cache),
+            },
+            "temporal_cache": {
+                "enabled": self.config.wind_cache_enabled and not self.custom,
+                "hits": int(self.timings.get("temporal_cache_hits", 0.0)),
+                "misses": int(self.timings.get("temporal_cache_misses", 0.0)),
+                "entries": int(self.timings.get("temporal_cache_misses", 0.0)),
+            },
+            "weather_snapshot": {
+                "mode": "trace_range" if self.snapshot is not None else "per_minute",
+                "count": 1 if self.snapshot is not None else len(self.snapshot_cache),
+                "observations": sum(len(rows) for rows in getattr(getattr(self.snapshot, "_snapshot", None), "observations_by_station", {}).values()) if self.snapshot is not None else None,
+                "requested_start_utc": _iso(getattr(self.snapshot, "requested_start_utc", None)) if self.snapshot is not None else None,
+                "requested_end_utc": _iso(getattr(self.snapshot, "requested_end_utc", None)) if self.snapshot is not None else None,
+            },
+            "timings_seconds": {key: round(value, 6) for key, value in sorted(self.timings.items())},
+            "db_query_count": int(self.timings.get("duckdb_query_count", 0.0)),
+        }
 
 
 def _load_region(path: Path) -> dict[str, Any]:
@@ -273,7 +384,7 @@ def _extent(region: Mapping[str, Any], projection: LocalMetricProjection, buffer
     min_y, max_y = min(item[1] for item in corners) - buffer_km * 1000, max(item[1] for item in corners) + buffer_km * 1000
     south, west = projection.inverse(min_x, min_y)
     north, east = projection.inverse(max_x, max_y)
-    return _Extent(west, east, south, north)
+    return _Extent(west, east, south, north, min_x, max_x, min_y, max_y)
 
 
 def _event_centroid(event: Mapping[str, Any], seeds: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
@@ -445,6 +556,7 @@ def _json_config(config: BacktraceConfig) -> dict[str, Any]:
 def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any]], config: BacktraceConfig | Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Trace one detected event and return particles, evidence cells, and diagnostics."""
 
+    trace_started = time.perf_counter()
     cfg = _config(config)
     seeds = select_receptor_seeds(event, memberships, cfg.seed_mode)
     if not seeds:
@@ -459,7 +571,21 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
     center_lon = (float(region["context_bbox"]["west"]) + float(region["context_bbox"]["east"])) / 2
     projection = LocalMetricProjection(center_lat, center_lon)
     extent = _extent(region, projection, cfg.domain_buffer_km)
-    resolver = _WindResolver(cfg, projection)
+    total_steps = math.ceil(cfg.maximum_backtrace_minutes * 60 / cfg.dt_seconds)
+    seed_times = [_time(seed["seed_time_utc"]) for seed in seeds]
+    snapshot_start = min(seed_times) - timedelta(seconds=total_steps * cfg.dt_seconds)
+    snapshot_end = max(seed_times)
+    for item in event.get("centroid_path") or []:
+        if isinstance(item, Mapping):
+            value = item.get("time_bin") or item.get("time_utc")
+            if value:
+                try:
+                    at = _time(value)
+                    snapshot_start = min(snapshot_start, at)
+                    snapshot_end = max(snapshot_end, at)
+                except (TypeError, ValueError):
+                    pass
+    resolver = _WindResolver(cfg, projection, snapshot_start, snapshot_end)
     sampler = _ResidualSampler(load_validation_residuals(cfg.residual_csv_path), random.Random(cfg.random_seed))
     weights = [_seed_weight(seed) for seed in seeds]
     weight_total = sum(weights)
@@ -471,7 +597,6 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
     display_trajectories: list[dict[str, Any]] = []
     termination_counts: dict[str, int] = defaultdict(int)
     wind_unavailable_details: dict[str, int] = defaultdict(int)
-    total_steps = math.ceil(cfg.maximum_backtrace_minutes * 60 / cfg.dt_seconds)
     block_seconds = cfg.residual_correlation_minutes * 60
     for receptor_index, (seed, receptor_weight) in enumerate(zip(seeds, weights)):
         x, y = projection.project(float(seed["lat"]), float(seed["lon"]))
@@ -486,10 +611,13 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
             termination = "time_limit"
             for step in range(total_steps):
                 block = (step * cfg.dt_seconds) // block_seconds
+                projection_started = time.perf_counter()
                 lat, lon = projection.inverse(px, py)
                 if not extent.contains(px, py, projection):
+                    resolver.timings["coordinate_projection_seconds"] += time.perf_counter() - projection_started
                     termination = "domain_limit"
                     break
+                resolver.timings["coordinate_projection_seconds"] += time.perf_counter() - projection_started
                 try:
                     estimate = resolver.estimate(lat, lon, current_time)
                 except Exception as exc:
@@ -502,7 +630,9 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
                     wind_unavailable_details[str(_get_value(estimate, "quality_category") or "UNKNOWN")] += 1
                     break
                 if block != last_block:
+                    residual_started = time.perf_counter()
                     residual = sampler.sample(estimate)
+                    resolver.timings["residual_sampling_seconds"] += time.perf_counter() - residual_started
                     residual_sources.append(residual[2])
                     last_block = block
                 du, dv = residual[0], residual[1]  # type: ignore[index]
@@ -517,11 +647,15 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
                 if not extent.contains(px, py, projection):
                     termination = "domain_limit"
                     break
+                projection_started = time.perf_counter()
                 next_lat, next_lon = projection.inverse(px, py)
+                resolver.timings["coordinate_projection_seconds"] += time.perf_counter() - projection_started
+                evidence_started = time.perf_counter()
                 cell = _cell_key(px, py, cfg.grid_cell_m)
                 receptor_surfaces[receptor_index][cell] += 1.0 / total_steps
                 cell_times[cell].append(_iso(current_time) or "")
                 path.append({"lat": round(next_lat, 6), "lon": round(next_lon, 6), "time_utc": _iso(current_time)})
+                resolver.timings["evidence_deposition_seconds"] += time.perf_counter() - evidence_started
                 if receptor_index == 0 and particle_index == 0 and step % 5 == 0:
                     resolver.arrows.append({"lat": round(lat, 6), "lon": round(lon, 6), "u_east_mps": round(float(u), 4), "v_north_mps": round(float(v), 4), "time_utc": _iso(current_time)})
             termination_counts[termination] += 1
@@ -559,13 +693,14 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
     centroid = _event_centroid(event, seeds)
     regions = _candidate_regions(cells, cfg, centroid)
     movement = _movement_diagnostic(event, resolver)
+    performance = resolver.performance(time.perf_counter() - trace_started, len(seeds), len(all_trajectories), total_steps)
     payload = {
         "schema_version": 1,
         "status": "TRACE_COMPLETE" if resolver.estimate_count else "NO_TRACEABLE_WIND",
         "event": dict(event),
         "trace_config": _json_config(cfg),
         "coordinate_system": {"input_output": "WGS84 EPSG:4326", "integration": "local metric metres", "projection": "local WGS84 tangent/equirectangular; origin at context center"},
-        "analysis_extent": asdict(extent) | {"buffer_km": cfg.domain_buffer_km},
+        "analysis_extent": {"west": extent.west, "east": extent.east, "south": extent.south, "north": extent.north, "buffer_km": cfg.domain_buffer_km},
         "receptor_seeds": [{**seed, "normalized_weight": round(weight, 9)} for seed, weight in zip(seeds, weights)],
         "wind_diagnostics": {"provider": "airtrace.analysis.wind.get_wind production path; cached read-only WindFieldSnapshot per UTC minute", "estimate_calls": resolver.estimate_count, "unavailable_estimates": resolver.unavailable_count, "quality_counts": dict(sorted(resolver.quality_counts.items())), "unavailable_details": dict(sorted(wind_unavailable_details.items())), "movement_consistency": movement, "map_arrows": resolver.arrows},
         "empirical_residual_policy": {"path": str(cfg.residual_csv_path), "sample_count": len(sampler.rows), "formula": "residual_u=actual_u-predicted_u; residual_v=actual_v-predicted_v", "primary_uncertainty": "sampled empirical vector residual", "distance_buckets": ["<= 3 km", "3–5 km", "5–10 km", "> 10 km"], "fallback_order": ["exact_bucket", "distance_fallback", "quality_fallback", "global_fallback"], "sampling_usage": dict(sorted(sampler.usage.items())), "temporal_correlation_minutes": cfg.residual_correlation_minutes, "subgrid_diffusion_default": "disabled"},
@@ -576,6 +711,8 @@ def trace_event(event: Mapping[str, Any], memberships: Iterable[Mapping[str, Any
         "candidate_source_regions": regions,
         "evidence_semantics": "0–1 evidence score is relative within this event, not calibrated probability. A candidate_source_region is not a polluter determination and does not establish legal attribution.",
     }
+    if cfg.profile:
+        payload["_performance_profile"] = performance
     return payload
 
 

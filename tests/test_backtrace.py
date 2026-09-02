@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from airtrace.analysis.backtrace import BacktraceConfig, LocalMetricProjection, select_receptor_seeds, trace_event
+from airtrace.analysis.backtrace import BacktraceConfig, LocalMetricProjection, _WindResolver, select_receptor_seeds, trace_event
 
 UTC = timezone.utc
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -140,6 +140,30 @@ class BacktraceTests(unittest.TestCase):
         event["centroid_path"] = [{"time_bin": "2026-01-01T12:00:00Z", "centroid": {"lat": 25.06, "lon": 121.49}}, {"time_bin": "2026-01-01T12:03:00Z", "centroid": {"lat": 25.0601, "lon": 121.49}}]
         result = trace_event(event, memberships, BacktraceConfig(region_config_path=REGION, wind_getter=FakeWind(), residual_csv_path=Path("missing.csv"), particles_per_receptor=1, maximum_backtrace_minutes=1))
         self.assertEqual(result["wind_diagnostics"]["movement_consistency"]["status"], "MOVEMENT_TOO_SMALL")
+
+    def test_quantized_wind_cache_hit_reuses_estimate(self):
+        wind = FakeWind(u=4)
+        config = BacktraceConfig(wind_getter=wind, wind_cache_spatial_m=250, wind_cache_quantized=True)
+        resolver = _WindResolver(config, LocalMetricProjection(25.06, 121.46))
+        first = resolver.estimate(25.0601, 121.4601, T0)
+        second = resolver.estimate(25.0602, 121.4602, T0)
+        self.assertIs(first, second)
+        self.assertEqual(len(wind.calls), 1)
+
+    def test_wind_cache_key_quantization_is_deterministic(self):
+        config = BacktraceConfig(wind_getter=FakeWind(), wind_cache_spatial_m=250, wind_cache_temporal_seconds=60, wind_cache_quantized=True)
+        resolver = _WindResolver(config, LocalMetricProjection(25.06, 121.46))
+        x, y = resolver.projection.project(25.0601, 121.4601)
+        self.assertEqual(resolver._cache_key(x, y, T0), resolver._cache_key(x, y, T0 + timedelta(seconds=59)))
+        self.assertNotEqual(resolver._cache_key(x, y, T0), resolver._cache_key(x, y, T0 + timedelta(minutes=1)))
+
+    def test_cache_disabled_uses_exact_custom_wind_semantics(self):
+        wind = FakeWind(u=4)
+        config = BacktraceConfig(wind_getter=wind, wind_cache_enabled=False)
+        resolver = _WindResolver(config, LocalMetricProjection(25.06, 121.46))
+        resolver.estimate(25.0601, 121.4601, T0 + timedelta(seconds=17))
+        self.assertEqual(wind.calls[0][0], 25.0601)
+        self.assertEqual(wind.calls[0][2], T0 + timedelta(seconds=17))
 
 
 if __name__ == "__main__":

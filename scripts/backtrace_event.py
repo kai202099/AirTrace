@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grid-cell-m", type=float, default=250.0)
     parser.add_argument("--domain-buffer-km", type=float, default=10.0)
     parser.add_argument("--display-trajectory-limit", type=int, default=120)
+    parser.add_argument("--no-wind-cache", action="store_true", help="disable v1.1 quantized wind cache and use strict/reference resolution")
+    parser.add_argument("--wind-cache-spatial-m", type=float, choices=(250.0, 500.0), default=250.0)
+    parser.add_argument("--wind-cache-temporal-seconds", type=int, default=60)
+    parser.add_argument("--quantized-wind-cache", action="store_true", help="enable spatially quantized wind cache (accuracy tradeoff; default is exact-coordinate cache)")
+    parser.add_argument("--profile", action="store_true", help="write reports/performance/backtrace_profile.json")
     parser.add_argument("--manual-lat", type=float)
     parser.add_argument("--manual-lon", type=float)
     parser.add_argument("--at", dest="manual_at", help="timezone-aware ISO time for manual diagnostic")
@@ -95,6 +100,9 @@ def main() -> int:
                 particles_per_receptor=args.particles_per_receptor, random_seed=args.seed, dt_seconds=args.dt_seconds,
                 maximum_backtrace_minutes=args.backtrace_minutes, grid_cell_m=args.grid_cell_m,
                 domain_buffer_km=args.domain_buffer_km, display_trajectory_limit=args.display_trajectory_limit,
+                wind_cache_enabled=not args.no_wind_cache, wind_cache_spatial_m=args.wind_cache_spatial_m,
+                wind_cache_temporal_seconds=args.wind_cache_temporal_seconds, wind_cache_quantized=args.quantized_wind_cache,
+                profile=args.profile,
             ))
             if manual:
                 result["manual_diagnostic_notice"] = "MANUAL DIAGNOSTIC — NOT DETECTED EVENT"
@@ -103,6 +111,12 @@ def main() -> int:
             stats = result.get("particle_stats", {})
             print(f"Receptors: {stats.get('receptor_count', 0)} · particles: {stats.get('particle_count', 0)} · steps/particle: {stats.get('integration_steps_per_particle', 0)}")
             print(f"Candidate source regions: {len(result.get('candidate_source_regions', []))}")
+        performance = result.pop("_performance_profile", None)
+        if performance is not None:
+            profile_path = ROOT / "reports" / "performance" / "backtrace_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(json.dumps({"schema_version": 1, "mode": "strict" if args.no_wind_cache else "optimized", "profile": performance}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print(f"Profile: {profile_path}")
         json_path = output_dir / "latest_source_trace.json"
         csv_path = output_dir / "latest_source_evidence.csv"
         map_path = output_dir / "latest_source_trace.html"

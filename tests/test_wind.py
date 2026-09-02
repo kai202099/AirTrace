@@ -1,6 +1,10 @@
 import math
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import duckdb
 
 from airtrace.analysis.wind import (
     RawWindObservation,
@@ -12,6 +16,7 @@ from airtrace.analysis.wind import (
     directions_from_vector,
     haversine_km,
     interpolate_vectors,
+    load_wind_snapshot_range,
     temporal_select,
     vector_from_wind_from,
 )
@@ -143,6 +148,29 @@ class WindInterpolationTests(unittest.TestCase):
         self.assertEqual(estimate.station_count, 3)
         self.assertEqual(estimate.diagnostics["effective_station_counts_within_km"]["5"], 3)
         self.assertGreater(haversine_km((121.0, 25.0), (121.0, 25.4)), 30)
+
+    def test_trace_snapshot_excludes_observations_outside_requested_period_and_margin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "weather.duckdb"
+            connection = duckdb.connect(str(path))
+            connection.execute("CREATE TABLE weather_station (station_id VARCHAR, station_name VARCHAR, lat DOUBLE, lon DOUBLE)")
+            connection.execute("CREATE TABLE weather_observation (station_id VARCHAR, observation_time_utc TIMESTAMPTZ, wind_from_deg DOUBLE, wind_speed_mps DOUBLE, wind_u_east_mps DOUBLE, wind_v_north_mps DOUBLE, wind_status VARCHAR, quality_flags VARCHAR)")
+            stations = [(sid, sid, 25.0 + index * 0.001, 121.0) for index, sid in enumerate(("a", "b", "c"))]
+            connection.executemany("INSERT INTO weather_station VALUES (?, ?, ?, ?)", stations)
+            rows = []
+            for sid, *_ in stations:
+                for at in (T0 - timedelta(minutes=20), T0, T0 + timedelta(minutes=20)):
+                    rows.append((sid, at, 270.0, 1.0, 1.0, 0.0, "valid", ""))
+            connection.executemany("INSERT INTO weather_observation VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+            connection.close()
+            before_read_mtime = path.stat().st_mtime_ns
+            field = load_wind_snapshot_range(
+                path, T0, T0, WindConfig(maximum_temporal_distance_minutes=5),
+            )
+            self.assertEqual(len(field._snapshot.observations_by_station["a"]), 1)
+            self.assertEqual(field.requested_start_utc, T0)
+            self.assertEqual(field.requested_end_utc, T0)
+            self.assertEqual(path.stat().st_mtime_ns, before_read_mtime)
 
 
 if __name__ == "__main__":

@@ -2,3 +2,4 @@ requests>=2.31,<3
 duckdb>=1.0,<2
 python-dotenv>=1.0,<2
 truststore>=0.10,<1
+psutil>=5.9,<7

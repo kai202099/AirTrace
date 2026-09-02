@@ -366,11 +366,25 @@ def _open_read_only(database_path: Path) -> duckdb.DuckDBPyConnection:
 
 
 def _read_snapshot(database_path: Path, query_time: datetime, config: WindConfig) -> _Snapshot:
-    query_time = utc_datetime(query_time)
+    return _read_snapshot_range(database_path, query_time, query_time, config)
+
+
+def _read_snapshot_range(
+    database_path: Path,
+    start_time: datetime,
+    end_time: datetime,
+    config: WindConfig,
+    metrics: dict[str, float] | None = None,
+) -> _Snapshot:
+    start_time = utc_datetime(start_time)
+    end_time = utc_datetime(end_time)
+    if end_time < start_time:
+        raise ValueError("snapshot end time must not precede start time")
     window = timedelta(minutes=config.maximum_temporal_distance_minutes)
     last_error: Exception | None = None
     for attempt in range(READ_RETRIES + 1):
         connection: duckdb.DuckDBPyConnection | None = None
+        started = time_module.perf_counter()
         try:
             connection = _open_read_only(database_path)
             station_rows = connection.execute(
@@ -385,7 +399,7 @@ def _read_snapshot(database_path: Path, query_time: datetime, config: WindConfig
                 WHERE observation_time_utc BETWEEN ? AND ?
                 ORDER BY station_id, observation_time_utc
                 """,
-                [query_time - window, query_time + window],
+                [start_time - window, end_time + window],
             ).fetchall()
             observations: dict[str, list[RawWindObservation]] = {}
             for row in observation_rows:
@@ -398,6 +412,9 @@ def _read_snapshot(database_path: Path, query_time: datetime, config: WindConfig
             span = connection.execute(
                 "SELECT min(observation_time_utc), max(observation_time_utc) FROM weather_observation"
             ).fetchone()
+            if metrics is not None:
+                metrics["duckdb_read_seconds"] = metrics.get("duckdb_read_seconds", 0.0) + (time_module.perf_counter() - started)
+                metrics["duckdb_query_count"] = metrics.get("duckdb_query_count", 0.0) + 3.0
             return _Snapshot(stations, {key: tuple(value) for key, value in observations.items()}, _row_time(span[0]), _row_time(span[1]))
         except Exception as exc:
             last_error = exc
@@ -416,10 +433,32 @@ def _read_snapshot(database_path: Path, query_time: datetime, config: WindConfig
 class WindFieldSnapshot:
     """One read-only weather snapshot used for one query time and grid."""
 
-    def __init__(self, snapshot: _Snapshot, query_time: datetime, config: WindConfig) -> None:
+    def __init__(
+        self,
+        snapshot: _Snapshot,
+        query_time: datetime,
+        config: WindConfig,
+        *,
+        requested_start_utc: datetime | None = None,
+        requested_end_utc: datetime | None = None,
+        metrics: dict[str, float] | None = None,
+        temporal_cache_enabled: bool = True,
+    ) -> None:
         self._snapshot = snapshot
         self.query_time_utc = utc_datetime(query_time)
         self.config = config
+        self.requested_start_utc = utc_datetime(requested_start_utc) if requested_start_utc else self.query_time_utc
+        self.requested_end_utc = utc_datetime(requested_end_utc) if requested_end_utc else self.query_time_utc
+        self.metrics = metrics
+        self.temporal_cache_enabled = temporal_cache_enabled
+        self._temporal_cache: dict[datetime, dict[str, TemporalWindValue | None]] = {}
+        self._observation_exclusions: dict[str, tuple[int, int]] = {
+            station_id: (
+                sum(record.wind_status.casefold() == "variable" for record in records),
+                sum(record.wind_status.casefold() in {"invalid", "inconsistent"} for record in records),
+            )
+            for station_id, records in snapshot.observations_by_station.items()
+        }
 
     @property
     def database_start_utc(self) -> datetime | None:
@@ -433,22 +472,42 @@ class WindFieldSnapshot:
         self,
         query_lat: float,
         query_lon: float,
+        query_time: datetime,
         exclude_station_ids: set[str] | None = None,
     ) -> tuple[list[StationWindUse], dict[str, int]]:
+        started = time_module.perf_counter()
         values: list[StationWindUse] = []
         excluded = {"variable": 0, "invalid": 0, "no_temporal_value": 0}
         excluded_ids = exclude_station_ids or set()
+        temporal_values = self._temporal_cache.get(query_time) if self.temporal_cache_enabled else None
+        if temporal_values is None:
+            temporal_started = time_module.perf_counter()
+            temporal_values = {
+                station.station_id: temporal_select(
+                    self._snapshot.observations_by_station.get(station.station_id, ()),
+                    query_time,
+                    self.config.maximum_temporal_distance_minutes,
+                )
+                for station in self._snapshot.stations
+            }
+            if self.temporal_cache_enabled:
+                self._temporal_cache[query_time] = temporal_values
+            if self.metrics is not None:
+                self.metrics["temporal_interpolation_seconds"] = self.metrics.get("temporal_interpolation_seconds", 0.0) + (time_module.perf_counter() - temporal_started)
+                if self.temporal_cache_enabled:
+                    self.metrics["temporal_cache_misses"] = self.metrics.get("temporal_cache_misses", 0.0) + 1.0
+        elif self.metrics is not None and self.temporal_cache_enabled:
+            self.metrics["temporal_cache_hits"] = self.metrics.get("temporal_cache_hits", 0.0) + 1.0
         for station in self._snapshot.stations:
             if station.station_id in excluded_ids:
                 continue
             if station.lat is None or station.lon is None:
                 excluded["invalid"] += 1
                 continue
-            records = self._snapshot.observations_by_station.get(station.station_id, ())
-            for record in records:
-                if record.wind_status.casefold() in {"variable", "invalid", "inconsistent"}:
-                    excluded["variable" if record.wind_status.casefold() == "variable" else "invalid"] += 1
-            selected = temporal_select(records, self.query_time_utc, self.config.maximum_temporal_distance_minutes)
+            variable_count, invalid_count = self._observation_exclusions.get(station.station_id, (0, 0))
+            excluded["variable"] += variable_count
+            excluded["invalid"] += invalid_count
+            selected = temporal_values.get(station.station_id)
             if selected is None:
                 excluded["no_temporal_value"] += 1
                 continue
@@ -462,6 +521,8 @@ class WindFieldSnapshot:
                 selected.u_east_mps, selected.v_north_mps, speed, wind_to, wind_from,
                 selected.wind_status, selected.quality_flags, 0.0,
             ))
+        if self.metrics is not None:
+            self.metrics["station_selection_seconds"] = self.metrics.get("station_selection_seconds", 0.0) + (time_module.perf_counter() - started)
         return values, excluded
 
     def estimate(
@@ -469,6 +530,7 @@ class WindFieldSnapshot:
         lat: float,
         lon: float,
         *,
+        query_time: datetime | str | None = None,
         exclude_station_ids: Iterable[str] | None = None,
     ) -> WindEstimate:
         if not math.isfinite(float(lat)) or not -90.0 <= float(lat) <= 90.0:
@@ -476,8 +538,10 @@ class WindFieldSnapshot:
         if not math.isfinite(float(lon)) or not -180.0 <= float(lon) <= 180.0:
             raise ValueError("lon must be a finite WGS84 longitude")
         query_lat, query_lon = float(lat), float(lon)
+        actual_query_time = parse_query_time(query_time) if query_time is not None else self.query_time_utc
+        estimate_started = time_module.perf_counter()
         excluded_ids = {str(station_id) for station_id in (exclude_station_ids or ())}
-        values, excluded = self._station_values(query_lat, query_lon, excluded_ids)
+        values, excluded = self._station_values(query_lat, query_lon, actual_query_time, excluded_ids)
         values.sort(key=lambda item: (item.distance_km, item.station_id))
         preferred = [item for item in values if item.distance_km <= self.config.preferred_radius_km]
         within_max = [item for item in values if item.distance_km <= self.config.maximum_radius_km]
@@ -494,14 +558,18 @@ class WindFieldSnapshot:
             "stations_without_usable_temporal_value": excluded["no_temporal_value"],
         }
         if len(selected) < self.config.minimum_stations:
-            return WindEstimate(
-                query_lat, query_lon, self.query_time_utc, None, None, None, None, None,
+            result = WindEstimate(
+                query_lat, query_lon, actual_query_time, None, None, None, None, None,
                 len(selected), tuple(selected),
                 selected[0].distance_km if selected else None,
                 selected[-1].distance_km if selected else None,
                 max((item.temporal_offset_minutes for item in selected), default=None),
                 "high", "STALE", None, 0.0 if selected else None, "INSUFFICIENT_STATIONS", common_diagnostics,
             )
+            if self.metrics is not None:
+                self.metrics["wind_estimate_seconds"] = self.metrics.get("wind_estimate_seconds", 0.0) + (time_module.perf_counter() - estimate_started)
+            return result
+        idw_started = time_module.perf_counter()
         weights = _idw_weights(selected, self.config.idw_power, self.config.idw_epsilon_km)
         total = sum(weights)
         selected = tuple(
@@ -509,6 +577,8 @@ class WindFieldSnapshot:
             for item, weight in zip(selected, weights)
         )
         u, v, disagreement = interpolate_vectors(selected, self.config.idw_power, self.config.idw_epsilon_km)
+        if self.metrics is not None:
+            self.metrics["idw_computation_seconds"] = self.metrics.get("idw_computation_seconds", 0.0) + (time_module.perf_counter() - idw_started)
         speed, wind_to, wind_from = directions_from_vector(u, v)
         nearest = selected[0].distance_km
         farthest = selected[-1].distance_km
@@ -530,8 +600,8 @@ class WindFieldSnapshot:
             "vector_disagreement_mps": round(disagreement, 6),
             "confidence_note": "confidence is a deterministic data/interpolation quality score, not a probability",
         })
-        return WindEstimate(
-            query_lat, query_lon, self.query_time_utc,
+        result = WindEstimate(
+            query_lat, query_lon, actual_query_time,
             round(u, 6), round(v, 6), round(speed, 6),
             None if wind_to is None else round(wind_to, 6),
             None if wind_from is None else round(wind_from, 6),
@@ -539,6 +609,9 @@ class WindFieldSnapshot:
             round(max(item.temporal_offset_minutes for item in selected), 6),
             spatial, temporal, round(disagreement, 6), confidence, quality, common_diagnostics,
         )
+        if self.metrics is not None:
+            self.metrics["wind_estimate_seconds"] = self.metrics.get("wind_estimate_seconds", 0.0) + (time_module.perf_counter() - estimate_started)
+        return result
 
     def estimates_for_grid(self, points: Iterable[tuple[float, float]]) -> list[WindEstimate]:
         return [self.estimate(lat, lon) for lat, lon in points]
@@ -548,6 +621,9 @@ def load_wind_snapshot(
     database_path: Path = DEFAULT_DATABASE,
     query_time: datetime | str | None = None,
     config: WindConfig = WindConfig(),
+    *,
+    metrics: dict[str, float] | None = None,
+    temporal_cache_enabled: bool = True,
 ) -> WindFieldSnapshot:
     if query_time is None:
         connection = _open_read_only(database_path)
@@ -562,7 +638,33 @@ def load_wind_snapshot(
         query = utc_datetime(value)
     else:
         query = parse_query_time(query_time)
-    return WindFieldSnapshot(_read_snapshot(database_path, query, config), query, config)
+    return WindFieldSnapshot(_read_snapshot_range(database_path, query, query, config, metrics), query, config, metrics=metrics, temporal_cache_enabled=temporal_cache_enabled)
+
+
+def load_wind_snapshot_range(
+    database_path: Path = DEFAULT_DATABASE,
+    start_time: datetime | str | None = None,
+    end_time: datetime | str | None = None,
+    config: WindConfig = WindConfig(),
+    *,
+    metrics: dict[str, float] | None = None,
+    temporal_cache_enabled: bool = True,
+) -> WindFieldSnapshot:
+    """Load one immutable read-only snapshot covering a trace time range."""
+
+    if start_time is None or end_time is None:
+        raise ValueError("snapshot range requires start_time and end_time")
+    start = parse_query_time(start_time)
+    end = parse_query_time(end_time)
+    return WindFieldSnapshot(
+        _read_snapshot_range(database_path, start, end, config, metrics),
+        start,
+        config,
+        requested_start_utc=start,
+        requested_end_utc=end,
+        metrics=metrics,
+        temporal_cache_enabled=temporal_cache_enabled,
+    )
 
 
 def get_wind(
@@ -578,7 +680,7 @@ def get_wind(
     """Estimate the wind vector at a WGS84 location and timezone-aware time."""
 
     if snapshot is not None:
-        return snapshot.estimate(lat, lon, exclude_station_ids=exclude_station_ids)
+        return snapshot.estimate(lat, lon, query_time=time, exclude_station_ids=exclude_station_ids)
     field = load_wind_snapshot(database_path, time, config)
     return field.estimate(lat, lon, exclude_station_ids=exclude_station_ids)
 
@@ -647,6 +749,6 @@ def build_summary(
 __all__ = [
     "WindConfig", "RawWindObservation", "TemporalWindValue", "StationWindUse", "WindEstimate",
     "WindFieldError", "WindFieldSnapshot", "vector_from_wind_from", "directions_from_vector",
-    "temporal_select", "interpolate_vectors", "load_wind_snapshot", "get_wind", "estimate_to_dict",
+    "temporal_select", "interpolate_vectors", "load_wind_snapshot", "load_wind_snapshot_range", "get_wind", "estimate_to_dict",
     "grid_points", "build_summary", "haversine_km",
 ]

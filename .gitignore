@@ -8,6 +8,13 @@ __pycache__/
 venv/
 env/
 
+# Python tooling caches and coverage output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
 # Secrets
 .env
 .env.*
@@ -22,6 +29,9 @@ data/raw/
 data/*.duckdb
 data/*.duckdb.wal
 data/*.duckdb.tmp
+
+# Benchmark and profiling output
+reports/performance/
 
 # Logs
 *.log
