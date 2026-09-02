@@ -1,0 +1,11 @@
+{
+  "region_id": "pilot_context",
+  "name": "AirTrace Pilot Context Zone",
+  "context_bbox": {
+    "north": 25.12,
+    "south": 25.0,
+    "west": 121.4,
+    "east": 121.52
+  },
+  "timezone": "Asia/Taipei"
+}
