@@ -573,9 +573,12 @@ def get_wind(
     database_path: Path = DEFAULT_DATABASE,
     config: WindConfig = WindConfig(),
     exclude_station_ids: Iterable[str] | None = None,
+    snapshot: WindFieldSnapshot | None = None,
 ) -> WindEstimate:
     """Estimate the wind vector at a WGS84 location and timezone-aware time."""
 
+    if snapshot is not None:
+        return snapshot.estimate(lat, lon, exclude_station_ids=exclude_station_ids)
     field = load_wind_snapshot(database_path, time, config)
     return field.estimate(lat, lon, exclude_station_ids=exclude_station_ids)
 
