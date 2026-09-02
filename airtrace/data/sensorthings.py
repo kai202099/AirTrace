@@ -37,6 +37,7 @@ class RegionConfig:
     name: str
     bbox: dict[str, float]
     timezone: str
+    core_bbox: dict[str, float] | None = None
 
     @classmethod
     def load(cls, path: Path) -> "RegionConfig":
@@ -54,11 +55,20 @@ class RegionConfig:
             raise SensorThingsError("region context_bbox is not ordered")
         if payload.get("timezone") != "Asia/Taipei":
             raise SensorThingsError("region timezone must be Asia/Taipei")
+        core_raw = payload.get("core_bbox")
+        core = None
+        if core_raw is not None:
+            if not isinstance(core_raw, dict) or any(key not in core_raw for key in required):
+                raise SensorThingsError("region core_bbox is incomplete")
+            core = {key: float(core_raw[key]) for key in required}
+            if not (core["south"] <= core["north"] and core["west"] <= core["east"]):
+                raise SensorThingsError("region core_bbox is not ordered")
         return cls(
             region_id=str(payload["region_id"]),
             name=str(payload["name"]),
             bbox=result,
             timezone=str(payload["timezone"]),
+            core_bbox=core,
         )
 
 

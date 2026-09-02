@@ -7,5 +7,11 @@
     "west": 121.4,
     "east": 121.52
   },
+  "core_bbox": {
+    "north": 25.085714,
+    "south": 25.051429,
+    "west": 121.427692,
+    "east": 121.473846
+  },
   "timezone": "Asia/Taipei"
 }
