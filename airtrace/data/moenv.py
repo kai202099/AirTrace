@@ -72,9 +72,11 @@ class MoenvClient:
         self,
         api_key: str,
         *,
+        dataset: str = MOENV_DATASET,
         timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
         max_retries: int = MAX_RETRIES,
         page_limit: int = 1000,
+        max_pages: int = MAX_PAGES,
     ) -> None:
         if not api_key.strip():
             raise MoenvError("MOENV_API_KEY is not set")
@@ -84,13 +86,21 @@ class MoenvClient:
             raise MoenvError("max_retries must not be negative")
         if page_limit <= 0 or page_limit > 1000:
             raise MoenvError("page_limit must be between 1 and 1000")
+        if max_pages <= 0:
+            raise MoenvError("max_pages must be positive")
+        normalized_dataset = str(dataset).strip().upper()
+        if not normalized_dataset or not normalized_dataset.replace("_", "").isalnum():
+            raise MoenvError("dataset must be a non-empty API dataset identifier")
         self.api_key = api_key.strip()
+        self.dataset = normalized_dataset
+        self.api_url = f"https://data.moenv.gov.tw/api/v2/{self.dataset.lower()}"
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.page_limit = page_limit
+        self.max_pages = max_pages
         self.session = requests.Session()
         self.session.headers.update(
-            {"Accept": "application/json", "User-Agent": "AirTrace-Reference-Air/1.0"}
+            {"Accept": "application/json", "User-Agent": "AirTrace-MOENV/1.0"}
         )
 
     @staticmethod
@@ -110,7 +120,7 @@ class MoenvClient:
         for attempt in range(self.max_retries + 1):
             try:
                 response = self.session.get(
-                    MOENV_API_URL, params=params, timeout=self.timeout_seconds
+                    self.api_url, params=params, timeout=self.timeout_seconds
                 )
                 if response.status_code in self.retryable_statuses and attempt < self.max_retries:
                     delay = self._retry_delay(response, attempt)
@@ -160,31 +170,38 @@ class MoenvClient:
         detail = str(last_error) if last_error else "unknown request failure"
         raise MoenvError(f"MOENV request failed after retries: {detail}") from last_error
 
-    def fetch_all(self) -> tuple[list[dict[str, Any]], list[Any]]:
-        """Return all records and the successful page responses used to obtain them."""
-        records: list[dict[str, Any]] = []
-        pages: list[Any] = []
-        offset = 0
+    def iter_pages(self, start_offset: int = 0):
+        """Yield ``(records, raw_page)`` without retaining a large catalogue."""
+        if start_offset < 0:
+            raise MoenvError("start_offset must not be negative")
+        offset = start_offset
         previous_signature: str | None = None
-        for page_number in range(MAX_PAGES):
+        for page_number in range(self.max_pages):
             payload = self.fetch_page(offset, self.page_limit)
             if isinstance(payload, list):
                 page_records = payload
             else:
                 page_records = payload["result"]["records"]
-            pages.append(payload)
             if not page_records:
                 break
             signature = json.dumps(page_records, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             if signature == previous_signature:
                 raise MoenvError("MOENV pagination repeated the same page")
             previous_signature = signature
-            records.extend(item for item in page_records if isinstance(item, dict))
+            yield [item for item in page_records if isinstance(item, dict)], payload
             if len(page_records) < self.page_limit:
                 break
             offset += len(page_records)
         else:
-            raise MoenvError(f"MOENV pagination exceeded {MAX_PAGES} pages")
+            raise MoenvError(f"MOENV pagination exceeded {self.max_pages} pages")
+
+    def fetch_all(self) -> tuple[list[dict[str, Any]], list[Any]]:
+        """Return all records and the successful page responses used to obtain them."""
+        records: list[dict[str, Any]] = []
+        pages: list[Any] = []
+        for page_records, payload in self.iter_pages():
+            records.extend(page_records)
+            pages.append(payload)
         return records, pages
 
 
