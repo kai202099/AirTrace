@@ -429,10 +429,18 @@ class WindFieldSnapshot:
     def database_end_utc(self) -> datetime | None:
         return self._snapshot.database_end_utc
 
-    def _station_values(self, query_lat: float, query_lon: float) -> tuple[list[StationWindUse], dict[str, int]]:
+    def _station_values(
+        self,
+        query_lat: float,
+        query_lon: float,
+        exclude_station_ids: set[str] | None = None,
+    ) -> tuple[list[StationWindUse], dict[str, int]]:
         values: list[StationWindUse] = []
         excluded = {"variable": 0, "invalid": 0, "no_temporal_value": 0}
+        excluded_ids = exclude_station_ids or set()
         for station in self._snapshot.stations:
+            if station.station_id in excluded_ids:
+                continue
             if station.lat is None or station.lon is None:
                 excluded["invalid"] += 1
                 continue
@@ -456,13 +464,20 @@ class WindFieldSnapshot:
             ))
         return values, excluded
 
-    def estimate(self, lat: float, lon: float) -> WindEstimate:
+    def estimate(
+        self,
+        lat: float,
+        lon: float,
+        *,
+        exclude_station_ids: Iterable[str] | None = None,
+    ) -> WindEstimate:
         if not math.isfinite(float(lat)) or not -90.0 <= float(lat) <= 90.0:
             raise ValueError("lat must be a finite WGS84 latitude")
         if not math.isfinite(float(lon)) or not -180.0 <= float(lon) <= 180.0:
             raise ValueError("lon must be a finite WGS84 longitude")
         query_lat, query_lon = float(lat), float(lon)
-        values, excluded = self._station_values(query_lat, query_lon)
+        excluded_ids = {str(station_id) for station_id in (exclude_station_ids or ())}
+        values, excluded = self._station_values(query_lat, query_lon, excluded_ids)
         values.sort(key=lambda item: (item.distance_km, item.station_id))
         preferred = [item for item in values if item.distance_km <= self.config.preferred_radius_km]
         within_max = [item for item in values if item.distance_km <= self.config.maximum_radius_km]
@@ -557,11 +572,12 @@ def get_wind(
     *,
     database_path: Path = DEFAULT_DATABASE,
     config: WindConfig = WindConfig(),
+    exclude_station_ids: Iterable[str] | None = None,
 ) -> WindEstimate:
     """Estimate the wind vector at a WGS84 location and timezone-aware time."""
 
     field = load_wind_snapshot(database_path, time, config)
-    return field.estimate(lat, lon)
+    return field.estimate(lat, lon, exclude_station_ids=exclude_station_ids)
 
 
 def estimate_to_dict(estimate: WindEstimate) -> dict[str, Any]:
