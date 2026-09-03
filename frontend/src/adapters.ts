@@ -78,4 +78,4 @@ export const formatReplayWindow = (start: string | null | undefined, end: string
 
 export const stageLabel = (stage: string) => ({ anomaly: 'Analyzing sensors', events: 'Clustering event', wind_diagnostics: 'Estimating wind', backtrace: 'Tracing source', evidence: 'Matching evidence', complete: 'Complete' }[stage] ?? stage)
 
-export const isSynthetic = (run: RunIndex | undefined) => Boolean(run?.synthetic_validation || run?.run_id?.toLowerCase().includes('synthetic'))
+export const isSynthetic = (run: RunIndex | undefined) => Boolean(run?.synthetic_validation)

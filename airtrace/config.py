@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ENV_PATH = REPOSITORY_ROOT / ".env"
+DEFAULT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
 
 def load_repository_env(dotenv_path: Path | None = None) -> Path:
@@ -38,6 +39,15 @@ def firms_map_key_configured() -> bool:
     return bool(get_firms_map_key())
 
 
+def get_cors_origins() -> list[str]:
+    """Return configured browser origins, retaining safe localhost defaults."""
+
+    load_repository_env()
+    raw = os.environ.get("AIRTRACE_CORS_ORIGINS", "")
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or list(DEFAULT_CORS_ORIGINS)
+
+
 # Application imports are the bootstrap boundary for API and pipeline code.
 load_repository_env()
 
@@ -45,6 +55,8 @@ load_repository_env()
 __all__ = [
     "REPOSITORY_ENV_PATH",
     "REPOSITORY_ROOT",
+    "DEFAULT_CORS_ORIGINS",
+    "get_cors_origins",
     "firms_map_key_configured",
     "get_firms_map_key",
     "load_repository_env",

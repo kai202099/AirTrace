@@ -1,0 +1,95 @@
+{
+  "anomaly": {
+    "bin_minutes": 3,
+    "baseline_minutes": 60,
+    "min_temporal_samples": 10,
+    "neighbor_radius_km": 1.0,
+    "max_neighbor_radius_km": 1.5,
+    "min_neighbors": 3,
+    "robust_sigma_floor": 1.5,
+    "smoothing_points": 3,
+    "max_current_age_minutes": 3.0,
+    "temporal_excess_threshold": 5.0,
+    "spatial_excess_threshold": 5.0,
+    "temporal_z_threshold": 3.0,
+    "spatial_z_threshold": 3.0
+  },
+  "event": {
+    "bin_minutes": 3,
+    "spatial_eps_km": 0.75,
+    "spatial_min_samples": 2,
+    "support_score_threshold": 0.35,
+    "support_temporal_excess_threshold": 3.0,
+    "support_spatial_excess_threshold": 3.0,
+    "link_centroid_km": 1.0,
+    "link_member_km": 0.75,
+    "max_gap_bins": 1,
+    "movement_floor_km": 0.1,
+    "isolated_seed_score_threshold": 8.0,
+    "strong_cluster_score_cap": 0.3
+  },
+  "wind": {
+    "preferred_radius_km": 15.0,
+    "maximum_radius_km": 30.0,
+    "minimum_stations": 3,
+    "maximum_stations": 8,
+    "maximum_temporal_distance_minutes": 15.0,
+    "idw_power": 2.0,
+    "idw_epsilon_km": 0.1
+  },
+  "backtrace": {
+    "database_path": "data/weather.duckdb",
+    "region_config_path": "config/pilot_region.json",
+    "residual_csv_path": "reports/pipeline/missing-residuals.csv",
+    "particles_per_receptor": 1,
+    "random_seed": 42,
+    "dt_seconds": 60,
+    "maximum_backtrace_minutes": 2,
+    "grid_cell_m": 250.0,
+    "domain_buffer_km": 10.0,
+    "residual_correlation_minutes": 10,
+    "seed_mode": "first",
+    "top_regions": 5,
+    "peak_threshold_fraction": 0.6,
+    "display_trajectory_limit": 120,
+    "subgrid_diffusion_mps": 0.0,
+    "wind_cache_enabled": true,
+    "wind_cache_spatial_m": 250.0,
+    "wind_cache_temporal_seconds": 60,
+    "wind_cache_quantized": false,
+    "profile": false,
+    "wind_config": {
+      "preferred_radius_km": 15.0,
+      "maximum_radius_km": 30.0,
+      "minimum_stations": 3,
+      "maximum_stations": 8,
+      "maximum_temporal_distance_minutes": 15.0,
+      "idw_power": 2.0,
+      "idw_epsilon_km": 0.1
+    }
+  },
+  "evidence": {
+    "source_buffer_km": 3.0,
+    "firms_window_hours": 12.0,
+    "max_facilities": 50,
+    "max_fire_groups": 20,
+    "firms_enabled": true
+  },
+  "pilot_region": {
+    "region_id": "pilot_context",
+    "name": "AirTrace Pilot Context Zone",
+    "context_bbox": {
+      "north": 25.12,
+      "south": 25.0,
+      "west": 121.4,
+      "east": 121.52
+    },
+    "core_bbox": {
+      "north": 25.085714,
+      "south": 25.051429,
+      "west": 121.427692,
+      "east": 121.473846
+    },
+    "timezone": "Asia/Taipei"
+  }
+}

@@ -1,0 +1,612 @@
+{
+  "incident_id": "AIRTRACE_20260902203000_001",
+  "event_id": "evt-0001",
+  "analysis_zone": "core",
+  "event": {
+    "event_id": "evt-0001",
+    "start_time_utc": "2026-09-02T20:30:00Z",
+    "last_seen_time_utc": "2026-09-02T20:30:00Z",
+    "duration_minutes": 3,
+    "bins_seen": 1,
+    "active_bin_count": 1,
+    "gap_bins": 0,
+    "unique_sensor_count": 2,
+    "peak_member_count": 2,
+    "peak_seed_count": 2,
+    "centroid_path": [
+      {
+        "time_bin": "2026-09-02T20:30:00Z",
+        "centroid": {
+          "lat": 25.0601,
+          "lon": 121.4501
+        },
+        "cluster_id_in_bin": "20260902T203000Z-c01",
+        "member_count": 2,
+        "seed_count": 2,
+        "peak_pm25": 30.0,
+        "max_anomaly_score": 7.0,
+        "displacement_km": null,
+        "bearing_deg": null,
+        "speed_kmh": null
+      }
+    ],
+    "initial_centroid": {
+      "lat": 25.0601,
+      "lon": 121.4501
+    },
+    "latest_centroid": {
+      "lat": 25.0601,
+      "lon": 121.4501
+    },
+    "max_anomaly_score": 7.0,
+    "peak_pm25": 30.0,
+    "max_temporal_excess": 8.0,
+    "max_spatial_excess": 8.0,
+    "event_strength": 0.64,
+    "event_status": "emerging",
+    "lifecycle_reason": "first_seed_cluster",
+    "merged_into": null,
+    "split_from": null,
+    "cluster_ids": [
+      "20260902T203000Z-c01"
+    ],
+    "isolated": false,
+    "event_order": 1
+  },
+  "reference_aq": {
+    "path": "data\\does-not-exist-reference.duckdb",
+    "status": "REFERENCE_AQ_UNAVAILABLE",
+    "rows_in_window": 0
+  },
+  "wind": {
+    "quality": "GOOD",
+    "representative": {
+      "u_east_mps": 1.0,
+      "v_north_mps": 0.0,
+      "speed_mps": 1.0,
+      "wind_to_deg": 90.0,
+      "wind_from_deg": 270.0,
+      "quality_category": "GOOD",
+      "station_count": 2,
+      "nearest_station_km": 1.0,
+      "farthest_station_km": 2.0,
+      "vector_disagreement_mps": 0.1
+    },
+    "disagreement": {
+      "vector_disagreement_mps": 0.1,
+      "station_count": 2,
+      "nearest_station_km": 1.0,
+      "farthest_station_km": 2.0
+    }
+  },
+  "trace": {
+    "schema_version": 1,
+    "status": "TRACE_COMPLETE",
+    "event": {
+      "event_id": "evt-0001",
+      "start_time_utc": "2026-09-02T20:30:00Z",
+      "last_seen_time_utc": "2026-09-02T20:30:00Z",
+      "duration_minutes": 3,
+      "bins_seen": 1,
+      "active_bin_count": 1,
+      "gap_bins": 0,
+      "unique_sensor_count": 2,
+      "peak_member_count": 2,
+      "peak_seed_count": 2,
+      "centroid_path": [
+        {
+          "time_bin": "2026-09-02T20:30:00Z",
+          "centroid": {
+            "lat": 25.0601,
+            "lon": 121.4501
+          },
+          "cluster_id_in_bin": "20260902T203000Z-c01",
+          "member_count": 2,
+          "seed_count": 2,
+          "peak_pm25": 30.0,
+          "max_anomaly_score": 7.0,
+          "displacement_km": null,
+          "bearing_deg": null,
+          "speed_kmh": null
+        }
+      ],
+      "initial_centroid": {
+        "lat": 25.0601,
+        "lon": 121.4501
+      },
+      "latest_centroid": {
+        "lat": 25.0601,
+        "lon": 121.4501
+      },
+      "max_anomaly_score": 7.0,
+      "peak_pm25": 30.0,
+      "max_temporal_excess": 8.0,
+      "max_spatial_excess": 8.0,
+      "event_strength": 0.64,
+      "event_status": "emerging",
+      "lifecycle_reason": "first_seed_cluster",
+      "merged_into": null,
+      "split_from": null,
+      "cluster_ids": [
+        "20260902T203000Z-c01"
+      ],
+      "isolated": false,
+      "event_order": 1,
+      "incident_id": "AIRTRACE_20260902203000_001"
+    },
+    "trace_config": {
+      "database_path": "data/weather.duckdb",
+      "region_config_path": "config/pilot_region.json",
+      "residual_csv_path": "reports/pipeline/missing-residuals.csv",
+      "particles_per_receptor": 1,
+      "random_seed": 42,
+      "dt_seconds": 60,
+      "maximum_backtrace_minutes": 2,
+      "grid_cell_m": 250.0,
+      "domain_buffer_km": 10.0,
+      "residual_correlation_minutes": 10,
+      "seed_mode": "first",
+      "top_regions": 5,
+      "peak_threshold_fraction": 0.6,
+      "display_trajectory_limit": 120,
+      "subgrid_diffusion_mps": 0.0,
+      "wind_cache_enabled": true,
+      "wind_cache_spatial_m": 250.0,
+      "wind_cache_temporal_seconds": 60,
+      "wind_cache_quantized": false,
+      "profile": false,
+      "wind_config": {
+        "preferred_radius_km": 15.0,
+        "maximum_radius_km": 30.0,
+        "minimum_stations": 3,
+        "maximum_stations": 8,
+        "maximum_temporal_distance_minutes": 15.0,
+        "idw_power": 2.0,
+        "idw_epsilon_km": 0.1
+      }
+    },
+    "coordinate_system": {
+      "input_output": "WGS84 EPSG:4326",
+      "integration": "local metric metres",
+      "projection": "local WGS84 tangent/equirectangular; origin at context center"
+    },
+    "analysis_extent": {
+      "west": 121.30083384970928,
+      "east": 121.61916615029072,
+      "south": 24.90953500995115,
+      "north": 25.21046499004885,
+      "buffer_km": 10.0
+    },
+    "receptor_seeds": [
+      {
+        "station_id": "a0",
+        "seed_time_utc": "2026-09-02T20:30:00Z",
+        "lat": 25.06,
+        "lon": 121.45,
+        "pm25": 30.0,
+        "anomaly_score": 7.0,
+        "temporal_excess": null,
+        "spatial_excess": null,
+        "role": "seed",
+        "normalized_weight": 0.506849315
+      },
+      {
+        "station_id": "a1",
+        "seed_time_utc": "2026-09-02T20:30:00Z",
+        "lat": 25.0602,
+        "lon": 121.4502,
+        "pm25": 30.0,
+        "anomaly_score": 6.0,
+        "temporal_excess": null,
+        "spatial_excess": null,
+        "role": "seed",
+        "normalized_weight": 0.493150685
+      }
+    ],
+    "wind_diagnostics": {
+      "provider": "airtrace.analysis.wind.get_wind production path; cached read-only WindFieldSnapshot per UTC minute",
+      "estimate_calls": 4,
+      "unavailable_estimates": 0,
+      "quality_counts": {
+        "GOOD": 4
+      },
+      "unavailable_details": {},
+      "movement_consistency": {
+        "status": "INSUFFICIENT_CENTROID_PATH",
+        "observed_movement_bearing_deg": null,
+        "wind_to_bearing_deg": null,
+        "angular_difference_deg": null
+      },
+      "map_arrows": [
+        {
+          "lat": 25.06,
+          "lon": 121.45,
+          "u_east_mps": 1.0,
+          "v_north_mps": 0.0,
+          "time_utc": "2026-09-02T20:29:00Z"
+        }
+      ]
+    },
+    "empirical_residual_policy": {
+      "path": "reports\\pipeline\\missing-residuals.csv",
+      "sample_count": 0,
+      "formula": "residual_u=actual_u-predicted_u; residual_v=actual_v-predicted_v",
+      "primary_uncertainty": "sampled empirical vector residual",
+      "distance_buckets": [
+        "<= 3 km",
+        "3–5 km",
+        "5–10 km",
+        "> 10 km"
+      ],
+      "fallback_order": [
+        "exact_bucket",
+        "distance_fallback",
+        "quality_fallback",
+        "global_fallback"
+      ],
+      "sampling_usage": {
+        "none": 2
+      },
+      "temporal_correlation_minutes": 10,
+      "subgrid_diffusion_default": "disabled"
+    },
+    "particle_stats": {
+      "receptor_count": 2,
+      "particles_per_receptor": 1,
+      "particle_count": 2,
+      "completed_particles": 2,
+      "integration_steps_per_particle": 2,
+      "integration_steps_attempted": 4,
+      "termination_counts": {
+        "time_limit": 2
+      },
+      "display_trajectory_count": 2
+    },
+    "particle_trajectories": [
+      {
+        "receptor_index": 0,
+        "station_id": "a0",
+        "particle_index": 0,
+        "termination_reason": "time_limit",
+        "residual_sources_by_correlation_block": [
+          "none"
+        ],
+        "points": [
+          {
+            "lat": 25.06,
+            "lon": 121.45,
+            "time_utc": "2026-09-02T20:30:00Z"
+          },
+          {
+            "lat": 25.06,
+            "lon": 121.449405,
+            "time_utc": "2026-09-02T20:29:00Z"
+          },
+          {
+            "lat": 25.06,
+            "lon": 121.44881,
+            "time_utc": "2026-09-02T20:28:00Z"
+          }
+        ]
+      },
+      {
+        "receptor_index": 1,
+        "station_id": "a1",
+        "particle_index": 0,
+        "termination_reason": "time_limit",
+        "residual_sources_by_correlation_block": [
+          "none"
+        ],
+        "points": [
+          {
+            "lat": 25.0602,
+            "lon": 121.4502,
+            "time_utc": "2026-09-02T20:30:00Z"
+          },
+          {
+            "lat": 25.0602,
+            "lon": 121.449605,
+            "time_utc": "2026-09-02T20:29:00Z"
+          },
+          {
+            "lat": 25.0602,
+            "lon": 121.44901,
+            "time_utc": "2026-09-02T20:28:00Z"
+          }
+        ]
+      }
+    ],
+    "display_trajectories": [
+      {
+        "receptor_index": 0,
+        "station_id": "a0",
+        "particle_index": 0,
+        "termination_reason": "time_limit",
+        "residual_sources_by_correlation_block": [
+          "none"
+        ],
+        "points": [
+          {
+            "lat": 25.06,
+            "lon": 121.45,
+            "time_utc": "2026-09-02T20:30:00Z"
+          },
+          {
+            "lat": 25.06,
+            "lon": 121.449405,
+            "time_utc": "2026-09-02T20:29:00Z"
+          },
+          {
+            "lat": 25.06,
+            "lon": 121.44881,
+            "time_utc": "2026-09-02T20:28:00Z"
+          }
+        ]
+      },
+      {
+        "receptor_index": 1,
+        "station_id": "a1",
+        "particle_index": 0,
+        "termination_reason": "time_limit",
+        "residual_sources_by_correlation_block": [
+          "none"
+        ],
+        "points": [
+          {
+            "lat": 25.0602,
+            "lon": 121.4502,
+            "time_utc": "2026-09-02T20:30:00Z"
+          },
+          {
+            "lat": 25.0602,
+            "lon": 121.449605,
+            "time_utc": "2026-09-02T20:29:00Z"
+          },
+          {
+            "lat": 25.0602,
+            "lon": 121.44901,
+            "time_utc": "2026-09-02T20:28:00Z"
+          }
+        ]
+      }
+    ],
+    "source_evidence_grid": [
+      {
+        "cell_key": [
+          -5,
+          -1
+        ],
+        "center_lat": 25.058869,
+        "center_lon": 121.448844,
+        "total_density": 1.0,
+        "normalized_density": 1.0,
+        "receptor_support_count": 1,
+        "receptor_support_fraction": 0.5,
+        "contributing_times_utc": [
+          "2026-09-02T20:28:00Z",
+          "2026-09-02T20:29:00Z"
+        ],
+        "source_evidence_score": 1.0
+      },
+      {
+        "cell_key": [
+          -5,
+          0
+        ],
+        "center_lat": 25.061131,
+        "center_lon": 121.448844,
+        "total_density": 1.0,
+        "normalized_density": 1.0,
+        "receptor_support_count": 1,
+        "receptor_support_fraction": 0.5,
+        "contributing_times_utc": [
+          "2026-09-02T20:28:00Z",
+          "2026-09-02T20:29:00Z"
+        ],
+        "source_evidence_score": 1.0
+      }
+    ],
+    "candidate_source_regions": [
+      {
+        "rank": 1,
+        "candidate_source_region": true,
+        "centroid": {
+          "lat": 25.06,
+          "lon": 121.448844
+        },
+        "area_km2": 0.125,
+        "peak_score": 1.0,
+        "mean_score": 1.0,
+        "receptor_support_count": 1,
+        "receptor_support_fraction": 0.5,
+        "distance_to_event_centroid_km": 0.127002,
+        "contributing_time_range_utc": {
+          "start": "2026-09-02T20:28:00Z",
+          "end": "2026-09-02T20:29:00Z"
+        },
+        "bounds": {
+          "south": 25.057738,
+          "north": 25.062262,
+          "west": 121.447721,
+          "east": 121.449967
+        },
+        "cell_count": 2
+      }
+    ],
+    "evidence_semantics": "0–1 evidence score is relative within this event, not calibrated probability. A candidate_source_region is not a polluter determination and does not establish legal attribution."
+  },
+  "evidence": {
+    "schema_version": 1,
+    "status": "EVIDENCE_COMPLETE",
+    "trace_status": "TRACE_COMPLETE",
+    "event": {
+      "event_id": "evt-0001",
+      "start_time_utc": "2026-09-02T20:30:00Z",
+      "last_seen_time_utc": "2026-09-02T20:30:00Z",
+      "duration_minutes": 3,
+      "bins_seen": 1,
+      "active_bin_count": 1,
+      "gap_bins": 0,
+      "unique_sensor_count": 2,
+      "peak_member_count": 2,
+      "peak_seed_count": 2,
+      "centroid_path": [
+        {
+          "time_bin": "2026-09-02T20:30:00Z",
+          "centroid": {
+            "lat": 25.0601,
+            "lon": 121.4501
+          },
+          "cluster_id_in_bin": "20260902T203000Z-c01",
+          "member_count": 2,
+          "seed_count": 2,
+          "peak_pm25": 30.0,
+          "max_anomaly_score": 7.0,
+          "displacement_km": null,
+          "bearing_deg": null,
+          "speed_kmh": null
+        }
+      ],
+      "initial_centroid": {
+        "lat": 25.0601,
+        "lon": 121.4501
+      },
+      "latest_centroid": {
+        "lat": 25.0601,
+        "lon": 121.4501
+      },
+      "max_anomaly_score": 7.0,
+      "peak_pm25": 30.0,
+      "max_temporal_excess": 8.0,
+      "max_spatial_excess": 8.0,
+      "event_strength": 0.64,
+      "event_status": "emerging",
+      "lifecycle_reason": "first_seed_cluster",
+      "merged_into": null,
+      "split_from": null,
+      "cluster_ids": [
+        "20260902T203000Z-c01"
+      ],
+      "isolated": false,
+      "event_order": 1
+    },
+    "trace_type": "DETECTED EVENT TRACE",
+    "candidate_source_regions": [
+      {
+        "rank": 1,
+        "candidate_source_region": true,
+        "centroid": {
+          "lat": 25.06,
+          "lon": 121.448844
+        },
+        "area_km2": 0.125,
+        "peak_score": 1.0,
+        "mean_score": 1.0,
+        "receptor_support_count": 1,
+        "receptor_support_fraction": 0.5,
+        "distance_to_event_centroid_km": 0.127002,
+        "contributing_time_range_utc": {
+          "start": "2026-09-02T20:28:00Z",
+          "end": "2026-09-02T20:29:00Z"
+        },
+        "bounds": {
+          "south": 25.057738,
+          "north": 25.062262,
+          "west": 121.447721,
+          "east": 121.449967
+        },
+        "cell_count": 2
+      }
+    ],
+    "manual_diagnostic_notice": null,
+    "source_evidence_extent": {
+      "south": 25.031729502985346,
+      "north": 25.088270497014655,
+      "west": 121.41909415491277,
+      "east": 121.47859384508722
+    },
+    "source_buffer_km": 3.0,
+    "facility_matches": [],
+    "facility_match_count_after_prefilter": 0,
+    "facility_match_status": "NO STRONG FACILITY MATCH",
+    "fire_matches": [],
+    "fire_group_count_after_prefilter": 0,
+    "fire_match_status": "NO FIRMS HOTSPOT DETECTED",
+    "cems_annotations": [],
+    "cems_join_diagnostics": {
+      "cems_unique_cno_count": 0,
+      "facility_unique_ems_no_count": 0,
+      "exact_match_count": 0,
+      "exact_string_match_rate": null,
+      "normalized_match_count": 0,
+      "normalized_match_rate": null,
+      "unmatched_cems_cno_count": 0,
+      "unmatched_facility_ems_no_count": 0,
+      "join_rule": "exact then whitespace/case normalization; no fuzzy company-name matching"
+    },
+    "cems_semantics": "CEMS measures stack pollutants, not ambient PM2.5. It is supporting context only and does not increase core facility likelihood or ranking.",
+    "scoring_semantics": "Facility and fire scores are deterministic 0–1 relative evidence within this trace, not probability, guilt, violation, or calibrated emission scores.",
+    "firms_temporal_window_hours": 12.0,
+    "firms_temporal_window_semantics": "heuristic; satellite non-continuity means minute-exact agreement is not required",
+    "limitations": [
+      "FIRMS non-detection does not rule out small or obscured fires.",
+      "CEMS values are stack observations and are not ambient PM2.5.",
+      "Registered facilities and satellite hotspots are candidate evidence entities, not attribution.",
+      "Source regions may remain UNREGISTERED / UNKNOWN SOURCE REGION."
+    ],
+    "firms_query_diagnostics": {
+      "requested": false,
+      "bbox_named": {
+        "south": 24.96840400995115,
+        "north": 25.15159599004885,
+        "west": 121.34967784970927,
+        "east": 121.54801015029072
+      },
+      "bbox_api_order": null,
+      "queries": [
+        1
+      ],
+      "event_time_utc": "2026-09-02T20:30:00Z",
+      "temporal_filter_hours": 12.0,
+      "sources": {},
+      "errors": [
+        "FIRMS_MAP_KEY is not set; no FIRMS query performed"
+      ]
+    },
+    "firms_status": "NOT_QUERIED_MISSING_KEY",
+    "cems_status": "CEMS_CONTEXT_UNAVAILABLE",
+    "cems_ingestion_diagnostics": {
+      "db_rows_loaded": 0,
+      "metadata": {
+        "schema_version": 1,
+        "dataset": "AQX_P_186",
+        "status": "BOUNDED_REQUEST_FAILED",
+        "dataset_complete": false,
+        "started_at_utc": "2026-09-03T00:07:21Z",
+        "last_attempt_offset": 1036000,
+        "db_rows_loaded": 1000000,
+        "unique_cno_loaded": 107,
+        "raw_snapshot_file_count": 1110,
+        "reason": "Prior bounded ingest reached the configured pagination cap; continuation attempts at offset 1036000 ended with MOENV ReadTimeout.",
+        "selection_semantics": "Partial snapshot retained for Evidence Fusion supporting context only; no completeness claim."
+      }
+    },
+    "no_strong_match_flag": true,
+    "no_strong_facility_match": true
+  },
+  "limitations": [
+    "CEMS_CONTEXT_UNAVAILABLE"
+  ],
+  "artifacts": {
+    "incident": "incident_AIRTRACE_20260902203000_001/incident.json",
+    "event_map": "incident_AIRTRACE_20260902203000_001/event_map.html",
+    "source_trace": "incident_AIRTRACE_20260902203000_001/source_trace.html",
+    "source_trace_json": "incident_AIRTRACE_20260902203000_001/source_trace.json",
+    "evidence_map": "incident_AIRTRACE_20260902203000_001/evidence_map.html",
+    "evidence_json": "incident_AIRTRACE_20260902203000_001/evidence.json",
+    "membership": "incident_AIRTRACE_20260902203000_001/membership.csv",
+    "source_evidence": "incident_AIRTRACE_20260902203000_001/source_evidence.csv",
+    "facility_candidates": "incident_AIRTRACE_20260902203000_001/facility_candidates.csv",
+    "fire_candidates": "incident_AIRTRACE_20260902203000_001/fire_candidates.csv"
+  }
+}

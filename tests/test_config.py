@@ -28,6 +28,14 @@ def test_missing_firms_key_is_reported_without_value(tmp_path, monkeypatch):
     assert config.firms_map_key_configured() is False
 
 
+def test_cors_origins_are_configurable_without_wildcard_default(monkeypatch):
+    monkeypatch.setenv("AIRTRACE_CORS_ORIGINS", "https://demo.example, http://localhost:5173")
+    assert config.get_cors_origins() == ["https://demo.example", "http://localhost:5173"]
+
+    monkeypatch.setenv("AIRTRACE_CORS_ORIGINS", " , ")
+    assert config.get_cors_origins() == list(config.DEFAULT_CORS_ORIGINS)
+
+
 def test_firms_secret_never_appears_in_status_or_manifest(monkeypatch):
     pytest.importorskip("fastapi")
     from airtrace.api import app as api_module

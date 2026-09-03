@@ -145,6 +145,9 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("CONTEXT DIAGNOSTIC REPLAY", manifest["warnings"])
             self.assertTrue(snapshot["pilot_region"]["core_bbox"])
             self.assertTrue(manifest["produced_artifacts"]["incidents_detail"])
+            self.assertEqual(manifest["provenance"]["type"], "observed_replay")
+            self.assertNotIn("\\", json.dumps(manifest["produced_artifacts"]))
+            self.assertNotIn("C:\\Users\\", json.dumps(manifest))
 
     def test_firms_key_is_not_persisted_in_replay_artifacts(self):
         secret = "unit-test-firms-secret"

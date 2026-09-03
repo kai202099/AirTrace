@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "run_id": "AIRTRACE_20260902203000_20260902203000_core_fad7fe6cdd",
+  "pipeline_version": "analysis-pipeline-v1",
+  "code_config_semantics_version": "existing-algorithm-v1-semantics-preserved",
+  "mode": "REPLAY",
+  "diagnostic": false,
+  "analysis_start_utc": "2026-09-02T20:30:00Z",
+  "analysis_end_utc": "2026-09-02T20:30:00Z",
+  "analysis_zone": "core",
+  "event_id_filter": null,
+  "fast_preview": false,
+  "provenance": {
+    "type": "synthetic_validation"
+  },
+  "input_db_spans": {
+    "pm25": {
+      "path": "data/does-not-exist.duckdb",
+      "available": false,
+      "start_utc": null,
+      "end_utc": null,
+      "row_count": null
+    },
+    "weather": {
+      "path": "data/does-not-exist-weather.duckdb",
+      "available": false,
+      "start_utc": null,
+      "end_utc": null,
+      "row_count": null
+    },
+    "facilities": {
+      "path": "data/does-not-exist-facilities.duckdb",
+      "available": false,
+      "start_utc": null,
+      "end_utc": null,
+      "row_count": null
+    },
+    "cems": {
+      "path": "data/does-not-exist-cems.duckdb",
+      "available": false,
+      "start_utc": null,
+      "end_utc": null,
+      "row_count": null
+    },
+    "reference_aq": {
+      "path": "data/does-not-exist-reference.duckdb",
+      "available": false,
+      "start_utc": null,
+      "end_utc": null,
+      "row_count": null
+    }
+  },
+  "pipeline_stages": [
+    {
+      "name": "anomaly",
+      "status": "completed",
+      "started_at": "2026-09-03T05:20:47Z",
+      "finished_at": "2026-09-03T05:20:47Z",
+      "duration_seconds": 6.7e-05,
+      "warnings": [],
+      "error": null
+    },
+    {
+      "name": "events",
+      "status": "completed",
+      "started_at": "2026-09-03T05:20:47Z",
+      "finished_at": "2026-09-03T05:20:47Z",
+      "duration_seconds": 0.00033,
+      "warnings": [],
+      "error": null
+    },
+    {
+      "name": "wind_diagnostics",
+      "status": "completed",
+      "started_at": "2026-09-03T05:20:47Z",
+      "finished_at": "2026-09-03T05:20:47Z",
+      "duration_seconds": 8.2e-05,
+      "warnings": [],
+      "error": null
+    },
+    {
+      "name": "backtrace",
+      "status": "completed",
+      "started_at": "2026-09-03T05:20:47Z",
+      "finished_at": "2026-09-03T05:20:47Z",
+      "duration_seconds": 0.000618,
+      "warnings": [],
+      "error": null
+    },
+    {
+      "name": "evidence",
+      "status": "completed",
+      "started_at": "2026-09-03T05:20:47Z",
+      "finished_at": "2026-09-03T05:20:47Z",
+      "duration_seconds": 0.000135,
+      "warnings": [],
+      "error": null
+    }
+  ],
+  "produced_artifacts": {
+    "manifest": "manifest.json",
+    "analysis_summary": "analysis_summary.json",
+    "incidents": "incidents.csv",
+    "README": "README.md",
+    "config_snapshot": "config_snapshot.json",
+    "incidents_detail": [
+      {
+        "incident": "incident_AIRTRACE_20260902203000_001/incident.json",
+        "event_map": "incident_AIRTRACE_20260902203000_001/event_map.html",
+        "source_trace": "incident_AIRTRACE_20260902203000_001/source_trace.html",
+        "source_trace_json": "incident_AIRTRACE_20260902203000_001/source_trace.json",
+        "evidence_map": "incident_AIRTRACE_20260902203000_001/evidence_map.html",
+        "evidence_json": "incident_AIRTRACE_20260902203000_001/evidence.json",
+        "membership": "incident_AIRTRACE_20260902203000_001/membership.csv",
+        "source_evidence": "incident_AIRTRACE_20260902203000_001/source_evidence.csv",
+        "facility_candidates": "incident_AIRTRACE_20260902203000_001/facility_candidates.csv",
+        "fire_candidates": "incident_AIRTRACE_20260902203000_001/fire_candidates.csv"
+      }
+    ]
+  },
+  "warnings": [],
+  "manual_diagnostic_flags": {
+    "context_diagnostic_replay": false,
+    "not_production_event_detection": false,
+    "known_fire_validation_loaded": false,
+    "known_fire_coordinates_in_replay": false
+  }
+}

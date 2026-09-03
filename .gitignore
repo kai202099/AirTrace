@@ -26,9 +26,14 @@ htmlcov/
 
 # Runtime / generated data
 data/raw/
-data/*.duckdb
-data/*.duckdb.wal
-data/*.duckdb.tmp
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# Analysis reports are local runtime artifacts. Curated demo data lives under
+# fixtures/ and the short explanation below remains tracked.
+reports/*
+!reports/README.md
 
 # Benchmark and profiling output
 reports/performance/

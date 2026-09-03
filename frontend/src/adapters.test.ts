@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAge, formatReplayWindow, formatTaipei, incidentFromDetail } from './adapters'
+import { formatAge, formatReplayWindow, formatTaipei, incidentFromDetail, isSynthetic } from './adapters'
 
 describe('data adapters', () => {
   it('converts incident artifact fields without inventing a probability', () => {
@@ -17,5 +17,10 @@ describe('data adapters', () => {
 
   it('formats a replay window separately from live freshness', () => {
     expect(formatReplayWindow('2026-09-02T16:45:00Z', '2026-09-02T20:30:00Z')).toContain('03 Sep 00:45–04:30')
+  })
+
+  it('uses explicit synthetic provenance from the API instead of a directory name', () => {
+    expect(isSynthetic({ run_id: 'renamed-demo', synthetic_validation: true } as any)).toBe(true)
+    expect(isSynthetic({ run_id: 'synthetic-looking-name', synthetic_validation: false } as any)).toBe(false)
   })
 })

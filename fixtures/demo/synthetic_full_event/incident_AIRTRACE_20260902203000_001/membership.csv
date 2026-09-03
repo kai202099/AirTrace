@@ -1,0 +1,3 @@
+event_id,time_bin,station_id,role,anomaly_score,pm25,lat,lon
+evt-0001,2026-09-02T20:30:00Z,a0,seed,7.0,30.0,25.06,121.45
+evt-0001,2026-09-02T20:30:00Z,a1,seed,6.0,30.0,25.0602,121.4502

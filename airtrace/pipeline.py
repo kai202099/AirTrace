@@ -55,6 +55,7 @@ from airtrace.analysis.evidence import (
 from airtrace.analysis.wind import WindConfig, estimate_to_dict, get_wind
 from airtrace.data.cems import load_cems
 from airtrace.data.facilities import load_facilities
+from airtrace.public_paths import public_path, sanitize_public_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,7 +108,7 @@ def _iso(value: datetime | None) -> str | None:
 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, Path):
-        return str(value)
+        return public_path(value)
     if isinstance(value, datetime):
         return _iso(value)
     if is_dataclass(value):
@@ -121,7 +122,7 @@ def _jsonable(value: Any) -> Any:
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_jsonable(payload), ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(sanitize_public_paths(_jsonable(payload)), ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 
 def _safe_output_name(value: str) -> str:
@@ -164,7 +165,7 @@ def _skip_stage(name: str, status: str, warning: str | None = None) -> _Stage:
 
 
 def _db_span(path: Path, table: str, column: str) -> dict[str, Any]:
-    result: dict[str, Any] = {"path": str(path), "available": path.exists(), "start_utc": None, "end_utc": None, "row_count": None}
+    result: dict[str, Any] = {"path": public_path(path), "available": path.exists(), "start_utc": None, "end_utc": None, "row_count": None}
     if not path.exists():
         return result
     connection = duckdb.connect(str(path), read_only=True)
@@ -293,7 +294,7 @@ def _read_cems_metadata(path: Path) -> dict[str, Any] | None:
 
 
 def _reference_status(path: Path, start: datetime, end: datetime) -> dict[str, Any]:
-    result = {"path": str(path), "status": "REFERENCE_AQ_UNAVAILABLE", "rows_in_window": 0}
+    result = {"path": public_path(path), "status": "REFERENCE_AQ_UNAVAILABLE", "rows_in_window": 0}
     if not path.exists():
         return result
     connection = duckdb.connect(str(path), read_only=True)
@@ -551,27 +552,29 @@ def run_analysis(
         incident_dir.mkdir(parents=True, exist_ok=True)
         event_view = _incident_event_payload(event_payload, incident["event"], incident["incident_id"])
         incident["artifacts"] = {
-            "incident": str((incident_dir / "incident.json").relative_to(run_dir)),
-            "event_map": str((incident_dir / "event_map.html").relative_to(run_dir)),
-            "source_trace": str((incident_dir / "source_trace.html").relative_to(run_dir)),
-            "source_trace_json": str((incident_dir / "source_trace.json").relative_to(run_dir)),
-            "evidence_map": str((incident_dir / "evidence_map.html").relative_to(run_dir)),
-            "evidence_json": str((incident_dir / "evidence.json").relative_to(run_dir)),
-            "membership": str((incident_dir / "membership.csv").relative_to(run_dir)),
-            "source_evidence": str((incident_dir / "source_evidence.csv").relative_to(run_dir)),
-            "facility_candidates": str((incident_dir / "facility_candidates.csv").relative_to(run_dir)),
-            "fire_candidates": str((incident_dir / "fire_candidates.csv").relative_to(run_dir)),
+            "incident": (incident_dir / "incident.json").relative_to(run_dir).as_posix(),
+            "event_map": (incident_dir / "event_map.html").relative_to(run_dir).as_posix(),
+            "source_trace": (incident_dir / "source_trace.html").relative_to(run_dir).as_posix(),
+            "source_trace_json": (incident_dir / "source_trace.json").relative_to(run_dir).as_posix(),
+            "evidence_map": (incident_dir / "evidence_map.html").relative_to(run_dir).as_posix(),
+            "evidence_json": (incident_dir / "evidence.json").relative_to(run_dir).as_posix(),
+            "membership": (incident_dir / "membership.csv").relative_to(run_dir).as_posix(),
+            "source_evidence": (incident_dir / "source_evidence.csv").relative_to(run_dir).as_posix(),
+            "facility_candidates": (incident_dir / "facility_candidates.csv").relative_to(run_dir).as_posix(),
+            "fire_candidates": (incident_dir / "fire_candidates.csv").relative_to(run_dir).as_posix(),
         }
-        _write_json(incident_dir / "incident.json", incident)
+        trace_payload = incident["trace"]
         write_event_map(event_view, incident_dir / "event_map.html")
         write_membership_csv(event_view, incident_dir / "membership.csv")
+        write_trace_map(trace_payload, incident_dir / "source_trace.html")
+        incident["trace"] = sanitize_public_paths(trace_payload)
         write_trace_json(incident["trace"], incident_dir / "source_trace.json")
         write_trace_evidence_csv(incident["trace"], incident_dir / "source_evidence.csv")
-        write_trace_map(incident["trace"], incident_dir / "source_trace.html")
         write_evidence_json(incident["evidence"], incident_dir / "evidence.json")
         write_facility_csv(incident["evidence"], incident_dir / "facility_candidates.csv")
         write_fire_csv(incident["evidence"], incident_dir / "fire_candidates.csv")
         write_evidence_map(incident["evidence"], incident["trace"], incident_dir / "evidence_map.html")
+        _write_json(incident_dir / "incident.json", incident)
 
     summary = {
         "schema_version": 1,
@@ -604,6 +607,7 @@ def run_analysis(
         "analysis_zone": analysis_zone,
         "event_id_filter": event_id,
         "fast_preview": fast_preview,
+        "provenance": {"type": "observed_replay" if mode == "REPLAY" else "live_observation"},
         "input_db_spans": {
             "pm25": _db_span(Path(database_path), "pm25_observation", "phenomenon_time_utc"),
             "weather": _db_span(Path(weather_database_path), "weather_observation", "observation_time_utc"),

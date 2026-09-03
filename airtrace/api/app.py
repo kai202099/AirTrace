@@ -26,7 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from airtrace.analysis.anomaly import parse_iso_utc
-from airtrace.config import firms_map_key_configured
+from airtrace.config import firms_map_key_configured, get_cors_origins
+from airtrace.provenance import is_synthetic_manifest
 from airtrace.pipeline import (
     DEFAULT_CONFIG,
     DEFAULT_DATABASE,
@@ -40,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CEMS_DATABASE = ROOT / "data" / "cems.duckdb"
 DEFAULT_CEMS_METADATA = ROOT / "data" / "cems_ingest_metadata.json"
 DEFAULT_FACILITIES_DATABASE = ROOT / "data" / "facilities.duckdb"
+DEFAULT_FIXTURE_ROOT = ROOT / "fixtures" / "demo"
 
 FRESH_SECONDS = 10 * 60
 STALE_SECONDS = 30 * 60
@@ -82,6 +84,7 @@ class Settings:
     cems_database_path = DEFAULT_CEMS_DATABASE
     cems_metadata_path = DEFAULT_CEMS_METADATA
     facilities_database_path = DEFAULT_FACILITIES_DATABASE
+    fixture_root = DEFAULT_FIXTURE_ROOT
 
 
 settings = Settings()
@@ -284,9 +287,12 @@ def _span(path: Path, table: str, column: str) -> dict[str, Any]:
 
 
 def _manifest_dirs() -> list[Path]:
-    if not settings.output_root.exists():
-        return []
-    return sorted((path.parent for path in settings.output_root.glob("*/manifest.json")), key=lambda path: path.name, reverse=True)
+    candidates: list[Path] = []
+    for root in (settings.output_root, settings.fixture_root):
+        if root.exists():
+            candidates.extend(path.parent for path in root.glob("*/manifest.json"))
+    unique = {path.resolve(): path for path in candidates}
+    return sorted(unique.values(), key=lambda path: path.name, reverse=True)
 
 
 def _run_index(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
@@ -294,7 +300,7 @@ def _run_index(manifest: dict[str, Any], path: Path) -> dict[str, Any]:
     summary = _json(summary_path)
     return {
         "run_id": manifest.get("run_id"), "mode": manifest.get("mode"), "diagnostic": manifest.get("diagnostic", False),
-        "synthetic_validation": path.name == "synthetic_full_event", "analysis_start_utc": manifest.get("analysis_start_utc"),
+        "synthetic_validation": is_synthetic_manifest(manifest), "analysis_start_utc": manifest.get("analysis_start_utc"),
         "analysis_end_utc": manifest.get("analysis_end_utc"), "analysis_zone": manifest.get("analysis_zone"),
         "event_count": summary.get("event_count", 0), "message": summary.get("message"), "warnings": manifest.get("warnings", []),
         "stage_status": summary.get("stage_status", {}),
@@ -403,7 +409,7 @@ class JobStore:
         try:
             result = run_analysis(parse_iso_utc(request.start), parse_iso_utc(request.end), analysis_zone=request.analysis_zone, fast_preview=request.fast_preview, database_path=settings.database_path, weather_database_path=settings.weather_database_path, config_path=settings.config_path, output_root=settings.output_root, facilities_database_path=settings.facilities_database_path, cems_database_path=settings.cems_database_path, cems_metadata_path=settings.cems_metadata_path)
             with self.lock:
-                self.jobs[job_id].update(status="completed", stage="complete", progress=100, result={"run_id": result["manifest"]["run_id"], "output_dir": result["output_dir"], "event_count": result["summary"]["event_count"]})
+                self.jobs[job_id].update(status="completed", stage="complete", progress=100, result={"run_id": result["manifest"]["run_id"], "event_count": result["summary"]["event_count"]})
         except Exception as exc:
             with self.lock:
                 self.jobs[job_id].update(status="failed", stage="failed", progress=100, error=f"{type(exc).__name__}: {exc}")
@@ -417,7 +423,7 @@ class JobStore:
 
 jobs = JobStore()
 app = FastAPI(title="AirTrace API", version="1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=get_cors_origins(), allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 @app.get("/api/status")

@@ -24,14 +24,14 @@ function MapView({ live, incident, run, sensorData, synthetic, layers, onSelectS
       zoom: 11.8,
       minZoom: 9,
       maxZoom: 17,
-      attributionControl: false,
       style: {
         version: 8,
-        sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors' } },
+        sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>' } },
         layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
       },
     })
     instance.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right')
+    instance.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-right')
     instance.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     instance.on('load', () => { map.current = instance; setMapReady(true) })
     return () => { void instance.remove(); map.current = null }

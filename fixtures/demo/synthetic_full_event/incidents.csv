@@ -1,0 +1,2 @@
+incident_id,event_id,start_time,end_time,duration_minutes,analysis_zone,event_strength,sensor_count,seed_count,peak_pm25,max_anomaly_score,trace_status,evidence_status,firms_status,cems_status,reference_aq_status,no_strong_facility_match,limitations
+AIRTRACE_20260902203000_001,evt-0001,2026-09-02T20:30:00Z,2026-09-02T20:30:00Z,3,core,0.64,2,2,30.0,7.0,TRACE_COMPLETE,EVIDENCE_COMPLETE,NOT_QUERIED_MISSING_KEY,CEMS_CONTEXT_UNAVAILABLE,REFERENCE_AQ_UNAVAILABLE,True,CEMS_CONTEXT_UNAVAILABLE
