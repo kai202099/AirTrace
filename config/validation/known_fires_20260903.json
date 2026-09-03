@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "dataset": "known_fire_ground_truth_20260903",
+  "timezone": "Asia/Taipei",
+  "events": [
+    {
+      "event_id": "sanchong",
+      "name": "Sanchong",
+      "fire_start_local": "2026-09-03T01:26:00+08:00",
+      "fire_end_local": "2026-09-03T01:53:00+08:00",
+      "location": {
+        "lat": 25.06606,
+        "lon": 121.478307,
+        "accuracy": "approximate ground truth",
+        "description": "二重國民小學附近，三重區",
+        "source": "https://poi.zhupiter.com/p/cht-468851/%E6%96%B0%E5%8C%97%E5%B8%82%E7%AB%8B%E4%BA%8C%E9%87%8D%E5%9C%8B%E6%B0%91%E5%B0%8F%E5%AD%B8/",
+        "source_note": "Public POI page identifies the address and publishes the map coordinate; the fire location is stated as nearby, not the school itself."
+      }
+    },
+    {
+      "event_id": "banqiao_station",
+      "name": "Banqiao Station",
+      "fire_start_local": "2026-09-03T02:02:00+08:00",
+      "fire_end_local": "2026-09-03T02:51:00+08:00",
+      "location": {
+        "lat": 25.01446,
+        "lon": 121.46327,
+        "accuracy": "approximate ground truth",
+        "description": "板橋捷運站附近",
+        "source": "https://media.taiwan.net.tw/en-us/portal/travel/details/attraction_382000000a_110901",
+        "source_note": "Taiwan tourism open data publishes the Banqiao station coordinate; the fire location is stated as nearby."
+      }
+    },
+    {
+      "event_id": "guoguang",
+      "name": "Guoguang Police Station",
+      "fire_start_local": "2026-09-03T02:43:00+08:00",
+      "fire_end_local": "2026-09-03T03:00:00+08:00",
+      "location": {
+        "lat": 24.999648946,
+        "lon": 121.472616004,
+        "accuracy": "approximate ground truth",
+        "description": "中和分局國光派出所附近",
+        "source": "https://wwwcdn.npa.gov.tw/ch/app/data/doc?detailNo=1362326648225009664&module=liaison&type=s",
+        "source_note": "National Police Agency open data publishes TWD97/TM2 121 coordinates for No. 168, Juguang Rd.; converted to WGS84 for this diagnostic. The fire location is stated as nearby."
+      }
+    }
+  ]
+}
