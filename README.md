@@ -10,6 +10,32 @@ an event.
 > Screenshot placeholder: capture the local workspace after starting the API
 > and frontend, then add the image here for a public demo page.
 
+## Windows quick start
+
+For a fresh Windows checkout, the intended local workflow is:
+
+1. Double-click `setup.bat` once. It creates the repository-local `.venv`,
+   installs Python runtime and development dependencies, validates Node.js,
+   runs `npm ci` in `frontend`, and creates `.env` from `.env.example` only if
+   `.env` does not already exist.
+2. If LIVE mode is needed, fill the required API keys in `.env`. Setup never
+   overwrites an existing `.env` and never prints credential values.
+3. Double-click `start.bat`.
+4. Open <http://localhost:5173>.
+5. Choose **REPLAY → Synthetic validation scenario** for an immediate demo.
+6. If LIVE mode is desired, double-click `start_recorders.bat` and collect
+   enough history before analyzing a meaningful live window.
+
+The backend opens at <http://127.0.0.1:8000>; Vite normally opens at
+<http://localhost:5173>. `start.bat` does not start recorders. Synthetic replay
+does not require API credentials or live data. LIVE mode requires the recorder
+databases and sufficient collected history. `.venv`, `frontend/node_modules`,
+`.env`, live DuckDB databases, and raw recorder data are local ignored files and
+are not part of a clone or release.
+
+Use `test.bat` to run the Python tests, `compileall`, frontend tests, and the
+frontend production build with the local environment.
+
 ## Why AirTrace
 
 Taiwan's dense micro-air-sensor network can reveal local PM2.5 patterns, but a
@@ -79,20 +105,19 @@ success or a general accuracy rate.
 See [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for provider and frontend-library
 attribution notes.
 
-## Quick Start
+## Manual setup (non-Windows/developer)
 
 AirTrace supports Python 3.11 or newer and uses the Node version required by
 Vite 7: Node `^20.19.0 || >=22.12.0`.
 
-### Backend
+### Backend (POSIX shell)
 
 From the repository root:
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
 Copy `.env.example` to `.env` and add local credentials only. Never commit
@@ -100,19 +125,19 @@ Copy `.env.example` to `.env` and add local credentials only. Never commit
 
 Start the local API:
 
-```powershell
-uvicorn airtrace.api.app:app --reload
+```sh
+.venv/bin/python -m uvicorn airtrace.api.app:app --reload
 ```
 
 Recorders and bootstrap scripts write local DuckDB databases and ignored raw
 snapshots. Poll once while setting up, or omit `--once` for the recorder loop:
 
-```powershell
-python scripts/record_pm25.py --once
-python scripts/record_weather.py --once
-python scripts/fetch_facilities.py
-python scripts/fetch_reference_air.py --once
-python scripts/fetch_cems.py --year-month YYYY-MM
+```sh
+.venv/bin/python scripts/record_pm25.py --once
+.venv/bin/python scripts/record_weather.py --once
+.venv/bin/python scripts/fetch_facilities.py
+.venv/bin/python scripts/fetch_reference_air.py --once
+.venv/bin/python scripts/fetch_cems.py --year-month YYYY-MM
 ```
 
 Collect sufficient history before attempting a meaningful live analysis. A
@@ -122,10 +147,10 @@ fresh clone has no historical live observations.
 
 In a second terminal:
 
-```powershell
+```sh
 cd frontend
 npm ci
-npm run test
+npm test
 npm run build
 npm run dev
 ```
@@ -166,11 +191,10 @@ contain historical live observations.
 From the repository root:
 
 ```powershell
-python -m pytest
-python -m compileall -q airtrace scripts tests
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m compileall -q airtrace scripts tests
 cd frontend
-npm ci
-npm run test
+npm test
 npm run build
 ```
 
