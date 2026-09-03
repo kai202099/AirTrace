@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     selection.add_argument("--at", metavar="ISO_UTC", help="analyze observations at or before this UTC timestamp")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--analysis-zone", choices=("core", "context"), default="core", help="target zone for analysis; default is the production Core Zone")
     parser.add_argument("--lookback-hours", type=float, default=24.0, help="analysis data query window; baseline remains 60 minutes")
     parser.add_argument("--json-output", type=Path, default=DEFAULT_OUTPUT_DIR / "latest_anomaly_report.json")
     parser.add_argument("--csv-output", type=Path, default=DEFAULT_OUTPUT_DIR / "latest_anomaly_report.csv")
@@ -51,6 +52,7 @@ def main() -> int:
             latest=bool(args.latest or not args.at),
             lookback_hours=args.lookback_hours,
             config=AnomalyConfig(),
+            analysis_zone=args.analysis_zone,
         )
         write_json(result, args.json_output)
         write_csv(result, args.csv_output)

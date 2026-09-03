@@ -20,6 +20,9 @@ import duckdb
 
 EARTH_RADIUS_KM = 6371.0088
 UTC = timezone.utc
+ANALYSIS_ZONES = ("core", "context")
+CONTEXT_DIAGNOSTIC_REPLAY = "CONTEXT DIAGNOSTIC REPLAY"
+NOT_PRODUCTION_EVENT_DETECTION = "NOT PRODUCTION EVENT DETECTION"
 REQUIRED_REPORT_FIELDS = (
     "analysis_time_utc", "station_id", "lat", "lon", "raw_pm25",
     "smoothed_pm25", "temporal_median", "temporal_mad", "temporal_excess",
@@ -28,6 +31,13 @@ REQUIRED_REPORT_FIELDS = (
     "neighbor_count", "spatial_radius_km", "spatial_status", "anomaly_score",
     "is_candidate", "quality_flags",
 )
+
+
+def validate_analysis_zone(value: str) -> str:
+    zone = str(value).strip().lower()
+    if zone not in ANALYSIS_ZONES:
+        raise ValueError(f"analysis_zone must be one of: {', '.join(ANALYSIS_ZONES)}")
+    return zone
 
 
 @dataclass(frozen=True)
@@ -519,7 +529,9 @@ def detect_anomalies(
     lookback_hours: float = 24.0,
     config: AnomalyConfig = AnomalyConfig(),
     now: datetime | None = None,
+    analysis_zone: str = "core",
 ) -> DetectionResult:
+    analysis_zone = validate_analysis_zone(analysis_zone)
     if lookback_hours <= 0:
         raise ValueError("lookback_hours must be positive")
     pilot = load_pilot_config(config_path)
@@ -562,12 +574,13 @@ def detect_anomalies(
     context_stations = [station for station in stations if bbox_contains(station.get("lat"), station.get("lon"), context_bbox)]
     core_stations = [station for station in context_stations if bbox_contains(station.get("lat"), station.get("lon"), core_bbox)]
     all_context = {str(station["station_id"]): station for station in context_stations}
+    analysis_stations = core_stations if analysis_zone == "core" else context_stations
     rows: list[dict[str, Any]] = []
     context_rows: list[dict[str, Any]] = []
     for station in sorted(context_stations, key=lambda item: str(item["station_id"])):
         row, context_row = _analyse_station(station, series, all_context, cutoff, now, config)
         context_rows.append(context_row)
-        if station in core_stations:
+        if station in analysis_stations:
             rows.append(row)
     rows.sort(key=lambda row: (-float(row["anomaly_score"] or -1), str(row["station_id"])))
     usable_rows = [row for row in rows if row["raw_pm25"] is not None and "stale_current_observation" not in row["quality_flags"] and "suspicious_future_timestamp" not in row["quality_flags"]]
@@ -577,7 +590,10 @@ def detect_anomalies(
     span_minutes = (utc_datetime(span[1]) - utc_datetime(span[0])).total_seconds() / 60
     available_minutes = max(0.0, (cutoff - utc_datetime(span[0])).total_seconds() / 60)
     summary = {
-        "core_sensors": len(rows),
+        "core_sensors": len(core_stations),
+        "context_sensor_count": len(context_stations),
+        "analysis_zone": analysis_zone,
+        "analysis_sensor_count": len(rows),
         "usable_sensors": len(usable_rows),
         "insufficient_history": sum(row["temporal_status"] != "sufficient" for row in rows),
         "insufficient_neighbors": sum(row["spatial_status"] != "sufficient" for row in rows),
@@ -595,6 +611,7 @@ def detect_anomalies(
         "generated_at_utc": iso_utc(now),
         "analysis_time_utc": iso_utc(cutoff),
         "analysis_bin_start_utc": iso_utc(floor_time(cutoff, config.bin_minutes)),
+        "analysis_zone": analysis_zone,
         "scope": "sensor-level anomaly candidates and diagnostics only; not a pollution-source detector",
         "score_note": "anomaly_score is a deterministic 0-10 evidence/anomaly-strength score, not a statistical probability",
         "config": asdict(config) | {"heuristic_label": "v1 heuristic; thresholds require calibration on real historical data"},
@@ -606,6 +623,8 @@ def detect_anomalies(
         "sensors": rows,
         "context_sensors": context_rows,
     }
+    if analysis_zone == "context":
+        payload["mode_notice"] = [CONTEXT_DIAGNOSTIC_REPLAY, NOT_PRODUCTION_EVENT_DETECTION]
     return DetectionResult(payload=payload, rows=rows, context_sensors=context_rows)
 
 
@@ -633,6 +652,7 @@ def detect_anomalies_range(
     lookback_hours: float = 2.0,
     config: AnomalyConfig = AnomalyConfig(),
     now: datetime | None = None,
+    analysis_zone: str = "core",
 ) -> list[DetectionResult]:
     """Evaluate the unchanged v1 detector once per analysis bin in a range.
 
@@ -642,6 +662,7 @@ def detect_anomalies_range(
     without future-filling it from the next bin.
     """
 
+    analysis_zone = validate_analysis_zone(analysis_zone)
     start_time = utc_datetime(start_time)
     end_time = utc_datetime(end_time)
     if end_time < start_time:
@@ -664,6 +685,7 @@ def detect_anomalies_range(
             lookback_hours=lookback_hours,
             config=config,
             now=stable_now,
+            analysis_zone=analysis_zone,
         ))
         current_bin += step
     return results
@@ -679,10 +701,19 @@ def write_csv(result: DetectionResult, path: Path) -> None:
     fields = list(REQUIRED_REPORT_FIELDS) + [
         "station_name", "observation_time_utc", "current_age_minutes", "isolated_suspicious",
     ]
+    is_context = result.payload.get("analysis_zone", "core") == "context"
+    if is_context:
+        fields = ["analysis_zone", "mode_notice"] + fields
     with path.open("w", encoding="utf-8", newline="") as handle:
+        if is_context:
+            handle.write(f"# {CONTEXT_DIAGNOSTIC_REPLAY}; {NOT_PRODUCTION_EVENT_DETECTION}\n")
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(result.rows)
+        if is_context:
+            marker = f"{CONTEXT_DIAGNOSTIC_REPLAY} / {NOT_PRODUCTION_EVENT_DETECTION}"
+            writer.writerows([{**row, "analysis_zone": "context", "mode_notice": marker} for row in result.rows])
+        else:
+            writer.writerows(result.rows)
 
 
 def _html_json(value: Any) -> str:
@@ -693,13 +724,14 @@ def write_map(result: DetectionResult, path: Path) -> None:
     payload = result.payload
     context = payload["zones"]["context_bbox"]
     core = payload["zones"]["core_bbox"]
+    diagnostic_layer_label = "Context diagnostics" if payload.get("analysis_zone", "core") == "context" else "Core diagnostics"
     center = [(context["south"] + context["north"]) / 2, (context["west"] + context["east"]) / 2]
     html = f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AirTrace PM2.5 Anomaly Diagnostics</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>body{{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033}}header{{padding:14px 18px;border-bottom:1px solid #d9e0ea;background:#fff}}h1{{margin:0 0 5px;font-size:21px}}.note{{color:#586579;font-size:13px}}#map{{height:calc(100vh - 105px);min-height:560px}}.popup-table td{{padding:2px 6px 2px 0;vertical-align:top}}.popup-table td:first-child{{color:#586579;white-space:nowrap}}</style></head>
-<body><header><h1>AirTrace PM2.5 Anomaly Diagnostics</h1><div class="note">Analysis: {payload["analysis_time_utc"]} · anomaly_score 是 0–10 evidence strength，不是 probability；此圖不是正式 frontend，也不代表污染源。</div></header><div id="map"></div>
+<body><header><h1>AirTrace PM2.5 Anomaly Diagnostics</h1><div class="note">Analysis: {payload["analysis_time_utc"]} · zone: {payload.get("analysis_zone", "core")} · anomaly_score 是 0–10 evidence strength，不是 probability；此圖不是正式 frontend，也不代表污染源。</div>{('<div class="note"><strong>' + CONTEXT_DIAGNOSTIC_REPLAY + '</strong><br><strong>' + NOT_PRODUCTION_EVENT_DETECTION + '</strong></div>' if payload.get("analysis_zone", "core") == "context" else '')}</header><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 const contextBbox={_html_json(context)}, coreBbox={_html_json(core)}, sensors={_html_json(result.context_sensors)}, coreRows={_html_json(result.rows)};
 const map=L.map('map',{{preferCanvas:true}}).setView({_html_json(center)},12); const osm=L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}}).addTo(map);
@@ -708,7 +740,7 @@ L.rectangle([[coreBbox.south,coreBbox.west],[coreBbox.north,coreBbox.east]],{{co
 function safe(v){{return String(v??'—').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]))}} function n(v){{return v===null||v===undefined?'—':Number(v).toFixed(2)}}
 const coreById=Object.fromEntries(coreRows.map(r=>[r.station_id,r])); const bg=L.layerGroup().addTo(map); const fg=L.layerGroup().addTo(map);
 sensors.forEach(s=>{{if(s.lat===null||s.lon===null)return; const r=coreById[s.station_id]; const score=r?.anomaly_score??0; const isCandidate=Boolean(r?.is_candidate); const color=isCandidate?'#d92d20':(r?'#f79009':'#94a3b8'); const popup=r?'<strong>'+safe(r.station_id)+'</strong><table class="popup-table"><tr><td>PM2.5</td><td>'+n(r.raw_pm25)+' µg/m³</td></tr><tr><td>temporal</td><td>'+n(r.temporal_median)+' / excess '+n(r.temporal_excess)+' / z '+n(r.temporal_z)+'</td></tr><tr><td>spatial</td><td>'+n(r.spatial_median)+' / excess '+n(r.spatial_excess)+' / z '+n(r.spatial_z)+'</td></tr><tr><td>score</td><td>'+n(r.anomaly_score)+'</td></tr><tr><td>neighbors</td><td>'+r.neighbor_count+' @ '+n(r.spatial_radius_km)+' km</td></tr><tr><td>quality</td><td>'+safe(r.quality_flags)+'</td></tr></table>':'<strong>'+safe(s.station_id)+'</strong><br>Context sensor background<br>PM2.5: '+n(s.pm25)+' µg/m³'; const marker=L.circleMarker([s.lat,s.lon],{{radius:r?Math.max(4,4+score*1.1):3,weight:isCandidate?3:1,opacity:.9,fillOpacity:r?.6:.3,color,fillColor:color}}).bindPopup(popup); marker.addTo(r?fg:bg)}});
-L.control.layers({{'OpenStreetMap':osm}},{{'Context sensors':bg,'Core diagnostics':fg}}).addTo(map); map.fitBounds([[contextBbox.south,contextBbox.west],[contextBbox.north,contextBbox.east]],{{padding:[14,14]}});
+L.control.layers({{'OpenStreetMap':osm}},{{'Context sensors':bg,'{diagnostic_layer_label}':fg}}).addTo(map); map.fitBounds([[contextBbox.south,contextBbox.west],[contextBbox.north,contextBbox.east]],{{padding:[14,14]}});
 </script></body></html>
 """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -721,9 +753,13 @@ def print_terminal_report(result: DetectionResult, json_path: Path, csv_path: Pa
     database = payload["database"]
     if summary["insufficient_history_overall"] or summary["insufficient_history"]:
         print("INSUFFICIENT_HISTORY")
+    if payload.get("analysis_zone", "core") == "context":
+        print(CONTEXT_DIAGNOSTIC_REPLAY)
+        print(NOT_PRODUCTION_EVENT_DETECTION)
     print("AirTrace PM2.5 Anomaly Detector")
     print(f"Analysis time: {payload['analysis_time_utc']} (3-minute bin {payload['analysis_bin_start_utc']})")
-    print(f"Core sensors: {summary['core_sensors']}")
+    sensor_label = "Context sensors" if payload.get("analysis_zone", "core") == "context" else "Core sensors"
+    print(f"{sensor_label}: {summary['analysis_sensor_count']}")
     print(f"Usable sensors: {summary['usable_sensors']}")
     print(f"Insufficient history: {summary['insufficient_history']}")
     print(f"Insufficient neighbors: {summary['insufficient_neighbors']}")

@@ -26,6 +26,9 @@ from airtrace.analysis.anomaly import (
     load_pilot_config,
     parse_iso_utc,
     latest_observation_time,
+    CONTEXT_DIAGNOSTIC_REPLAY,
+    NOT_PRODUCTION_EVENT_DETECTION,
+    validate_analysis_zone,
 )
 
 
@@ -497,9 +500,11 @@ def build_event_payload(
     event_config: EventConfig = EventConfig(),
     selected_start: datetime | None = None,
     selected_end: datetime | None = None,
+    analysis_zone: str = "core",
 ) -> dict[str, Any]:
     if not results:
         raise ValueError("no analysis bins available")
+    analysis_zone = validate_analysis_zone(analysis_zone)
     clustered = cluster_event_results(results, event_config)
     pilot = load_pilot_config(config_path)
     first = parse_iso_utc(results[0].payload["analysis_bin_start_utc"])
@@ -514,6 +519,7 @@ def build_event_payload(
         "detector": "AirTrace PM2.5 Spatiotemporal Event Clustering v1",
         "generated_at_utc": iso_utc(datetime.now(UTC)),
         "analysis_window": {"start_time_utc": iso_utc(window_start), "end_time_utc": iso_utc(window_end)},
+        "analysis_zone": analysis_zone,
         "scope": "sensor-observed event evidence only; no wind, source attribution, facility matching, or LOCAL/REGIONAL classification",
         "config": {
             "event": asdict(event_config),
@@ -528,6 +534,8 @@ def build_event_payload(
             "transient_count": transient,
             "isolated_count": isolated,
             "support_only_cluster_count": sum(not cluster["event_eligible"] for cluster in clustered["clusters"]),
+            "context_sensor_count": len(results[-1].context_sensors),
+            "usable_sensor_count": sum(sensor.get("status") == "usable" for sensor in results[-1].context_sensors) if analysis_zone == "context" else sum(row.get("raw_pm25") is not None and "stale_current_observation" not in str(row.get("quality_flags") or "") and "suspicious_future_timestamp" not in str(row.get("quality_flags") or "") for row in results[-1].rows),
         },
         "movement_note": "displacement, bearing, and speed describe observed anomaly centroid movement only; they are not physical plume velocity",
         "events": clustered["events"],
@@ -536,6 +544,8 @@ def build_event_payload(
         "membership": clustered["membership"],
         "context_sensors": clustered["context_sensors"],
     }
+    if analysis_zone == "context":
+        payload["mode_notice"] = [CONTEXT_DIAGNOSTIC_REPLAY, NOT_PRODUCTION_EVENT_DETECTION]
     return payload
 
 
@@ -546,27 +556,44 @@ def write_event_json(payload: dict[str, Any], path: Path) -> None:
 
 def write_event_csv(payload: dict[str, Any], path: Path) -> None:
     fields = ["event_id", "start", "end", "duration", "unique_sensors", "max_members", "peak_pm25", "max_score", "event_strength", "status", "centroid_lat", "centroid_lon"]
+    is_context = payload.get("analysis_zone", "core") == "context"
+    if is_context:
+        fields = ["analysis_zone", "mode_notice"] + fields
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
+        if is_context:
+            handle.write(f"# {CONTEXT_DIAGNOSTIC_REPLAY}; {NOT_PRODUCTION_EVENT_DETECTION}\n")
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for event in payload["events"]:
-            writer.writerow({
+            row = {
                 "event_id": event["event_id"], "start": event["start_time_utc"], "end": event["last_seen_time_utc"],
                 "duration": event["duration_minutes"], "unique_sensors": event["unique_sensor_count"],
                 "max_members": event["peak_member_count"], "peak_pm25": event["peak_pm25"],
                 "max_score": event["max_anomaly_score"], "event_strength": event["event_strength"],
                 "status": event["event_status"], "centroid_lat": event["latest_centroid"]["lat"], "centroid_lon": event["latest_centroid"]["lon"],
-            })
+            }
+            if is_context:
+                row = {"analysis_zone": "context", "mode_notice": f"{CONTEXT_DIAGNOSTIC_REPLAY} / {NOT_PRODUCTION_EVENT_DETECTION}", **row}
+            writer.writerow(row)
 
 
 def write_membership_csv(payload: dict[str, Any], path: Path) -> None:
     fields = ["event_id", "time_bin", "station_id", "role", "anomaly_score", "pm25", "lat", "lon"]
+    is_context = payload.get("analysis_zone", "core") == "context"
+    if is_context:
+        fields = ["analysis_zone", "mode_notice"] + fields
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
+        if is_context:
+            handle.write(f"# {CONTEXT_DIAGNOSTIC_REPLAY}; {NOT_PRODUCTION_EVENT_DETECTION}\n")
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(payload["membership"])
+        if is_context:
+            marker = f"{CONTEXT_DIAGNOSTIC_REPLAY} / {NOT_PRODUCTION_EVENT_DETECTION}"
+            writer.writerows([{**row, "analysis_zone": "context", "mode_notice": marker} for row in payload["membership"]])
+        else:
+            writer.writerows(payload["membership"])
 
 
 def _html_json(value: Any) -> str:
@@ -578,7 +605,8 @@ def write_event_map(payload: dict[str, Any], path: Path) -> None:
     context = payload["context_sensors"]
     center = [(zones["context_bbox"]["south"] + zones["context_bbox"]["north"]) / 2, (zones["context_bbox"]["west"] + zones["context_bbox"]["east"]) / 2]
     empty_notice = "<div class=\"empty\">No events in selected window</div>" if not events else ""
-    html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AirTrace Event Diagnostics</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>body{{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033}}header{{padding:14px 18px;border-bottom:1px solid #d9e0ea;background:#fff}}h1{{margin:0 0 5px;font-size:21px}}.note{{color:#586579;font-size:13px}}.empty{{margin-top:9px;padding:8px 10px;background:#f3f6fa;border-left:3px solid #94a3b8;color:#475569;font-size:13px}}#map{{height:calc(100vh - 105px);min-height:560px}}.popup-table td{{padding:2px 6px 2px 0;vertical-align:top}}.popup-table td:first-child{{color:#586579;white-space:nowrap}}</style></head><body><header><h1>AirTrace Spatiotemporal Event Diagnostics v1</h1><div class="note">Window: {payload["analysis_window"]["start_time_utc"]} → {payload["analysis_window"]["end_time_utc"]} · {payload["summary"]["event_count"]} events · observed centroid movement is not plume velocity.</div>{empty_notice}</header><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+    mode_notice = "" if payload.get("analysis_zone", "core") == "core" else f"<div class=\"note\"><strong>{CONTEXT_DIAGNOSTIC_REPLAY}</strong><br><strong>{NOT_PRODUCTION_EVENT_DETECTION}</strong></div>"
+    html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AirTrace Event Diagnostics</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>body{{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033}}header{{padding:14px 18px;border-bottom:1px solid #d9e0ea;background:#fff}}h1{{margin:0 0 5px;font-size:21px}}.note{{color:#586579;font-size:13px}}.empty{{margin-top:9px;padding:8px 10px;background:#f3f6fa;border-left:3px solid #94a3b8;color:#475569;font-size:13px}}#map{{height:calc(100vh - 105px);min-height:560px}}.popup-table td{{padding:2px 6px 2px 0;vertical-align:top}}.popup-table td:first-child{{color:#586579;white-space:nowrap}}</style></head><body><header><h1>AirTrace Spatiotemporal Event Diagnostics v1</h1><div class="note">Window: {payload["analysis_window"]["start_time_utc"]} → {payload["analysis_window"]["end_time_utc"]} · zone: {payload.get("analysis_zone", "core")} · {payload["summary"]["event_count"]} events · observed centroid movement is not plume velocity.</div>{mode_notice}{empty_notice}</header><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
 const contextBbox={_html_json(zones["context_bbox"])},coreBbox={_html_json(zones["core_bbox"])},sensors={_html_json(context)},events={_html_json(events)};
 const map=L.map('map',{{preferCanvas:true}}).setView({_html_json(center)},12);const osm=L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}}).addTo(map);L.rectangle([[contextBbox.south,contextBbox.west],[contextBbox.north,contextBbox.east]],{{color:'#26364f',weight:2,fill:false,dashArray:'7 5'}}).bindPopup('<strong>Context Zone</strong>').addTo(map);L.rectangle([[coreBbox.south,coreBbox.west],[coreBbox.north,coreBbox.east]],{{color:'#8e2a86',weight:3,fillColor:'#c77dff',fillOpacity:.08,dashArray:'8 4'}}).bindPopup('<strong>Core Zone</strong>').addTo(map);
 function safe(v){{return String(v??'—').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]))}}function n(v){{return v===null||v===undefined?'—':Number(v).toFixed(2)}}const bg=L.layerGroup().addTo(map),fg=L.layerGroup().addTo(map);sensors.forEach(s=>{{if(s.lat===null||s.lon===null)return;L.circleMarker([s.lat,s.lon],{{radius:3,color:'#94a3b8',fillColor:'#cbd5e1',fillOpacity:.35,weight:1}}).bindPopup('<strong>'+safe(s.station_id)+'</strong><br>Context sensor background<br>PM2.5: '+n(s.pm25)).addTo(bg)}});const colors=['#d92d20','#2563eb','#059669','#9333ea','#ea580c','#0891b2','#be185d'];events.forEach((e,i)=>{{const color=colors[i%colors.length],layer=L.layerGroup().addTo(fg),members={{}};e.centroid_path.forEach((p,j)=>{{const marker=L.circleMarker([p.centroid.lat,p.centroid.lon],{{radius:j===0?8:6,color,fillColor:color,fillOpacity:.75,weight:2}}).bindPopup('<strong>'+safe(e.event_id)+'</strong><table class="popup-table"><tr><td>status</td><td>'+safe(e.event_status)+'</td></tr><tr><td>time</td><td>'+safe(p.time_bin)+'</td></tr><tr><td>members</td><td>'+p.member_count+'</td></tr><tr><td>seed count</td><td>'+p.seed_count+'</td></tr><tr><td>peak PM2.5</td><td>'+n(p.peak_pm25)+'</td></tr><tr><td>score</td><td>'+n(p.max_anomaly_score)+'</td></tr></table>');marker.addTo(layer);if(j){{L.polyline([[e.centroid_path[j-1].centroid.lat,e.centroid_path[j-1].centroid.lon],[p.centroid.lat,p.centroid.lon]],{{color,weight:3,opacity:.8}}).addTo(layer)}}}});e.centroid_path.forEach(p=>{{}});const first=e.centroid_path[0],last=e.centroid_path[e.centroid_path.length-1];L.circleMarker([first.centroid.lat,first.centroid.lon],{{radius:10,color,fill:false,weight:2}}).bindTooltip(e.event_id+' start').addTo(layer);L.circleMarker([last.centroid.lat,last.centroid.lon],{{radius:10,color,fill:false,weight:2,dashArray:'3 3'}}).bindTooltip(e.event_id+' latest').addTo(layer)}});L.control.layers({{'OpenStreetMap':osm}},{{'Context sensors':bg,'Events':fg}}).addTo(map);map.fitBounds([[contextBbox.south,contextBbox.west],[contextBbox.north,contextBbox.east]],{{padding:[14,14]}});</script></body></html>"""
@@ -591,7 +619,8 @@ def write_event_timeline(payload: dict[str, Any], path: Path) -> None:
     for event in payload["events"]:
         rows.append(f"<section><h2>{event['event_id']} · {event['event_status']}</h2><p>{event['start_time_utc']} → {event['last_seen_time_utc']} · strength {event['event_strength']} · sensors {event['unique_sensor_count']}</p><table><tr><th>time</th><th>members</th><th>seeds</th><th>peak PM2.5</th><th>max score</th><th>movement km / bearing / kmh</th></tr>" + "".join(f"<tr><td>{point['time_bin']}</td><td>{point['member_count']}</td><td>{point['seed_count']}</td><td>{point['peak_pm25']}</td><td>{point['max_anomaly_score']}</td><td>{point['displacement_km']} / {point['bearing_deg'] or '—'} / {point['speed_kmh']}</td></tr>" for point in event["centroid_path"]) + "</table></section>")
     body = "<p>No events in selected window.</p>" if not rows else "".join(rows)
-    html = f"<!doctype html><html lang='zh-Hant'><meta charset='utf-8'><title>AirTrace Event Timeline</title><style>body{{font-family:system-ui,sans-serif;margin:24px;color:#172033}}section{{margin:0 0 28px}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{border:1px solid #d9e0ea;padding:6px;text-align:left}}th{{background:#f3f6fa}}h1{{font-size:22px}}</style><h1>AirTrace Event Timeline Diagnostic</h1><p>Observed centroid movement only; not physical plume velocity.</p>{body}</html>"
+    marker = f"<p><strong>{CONTEXT_DIAGNOSTIC_REPLAY}</strong><br><strong>{NOT_PRODUCTION_EVENT_DETECTION}</strong></p>" if payload.get("analysis_zone", "core") == "context" else ""
+    html = f"<!doctype html><html lang='zh-Hant'><meta charset='utf-8'><title>AirTrace Event Timeline</title><style>body{{font-family:system-ui,sans-serif;margin:24px;color:#172033}}section{{margin:0 0 28px}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{border:1px solid #d9e0ea;padding:6px;text-align:left}}th{{background:#f3f6fa}}h1{{font-size:22px}}</style><h1>AirTrace Event Timeline Diagnostic</h1>{marker}<p>Observed centroid movement only; not physical plume velocity.</p>{body}</html>"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
 
@@ -603,14 +632,17 @@ def run_event_analysis(
     end_time: datetime,
     anomaly_lookback_hours: float = 2.0,
     event_config: EventConfig = EventConfig(),
+    analysis_zone: str = "core",
 ) -> dict[str, Any]:
+    analysis_zone = validate_analysis_zone(analysis_zone)
     anomaly_config = AnomalyConfig(bin_minutes=event_config.bin_minutes)
     results = detect_anomalies_range(
         database_path, config_path, start_time, end_time,
         lookback_hours=anomaly_lookback_hours,
         config=anomaly_config,
+        analysis_zone=analysis_zone,
     )
-    payload = build_event_payload(results, config_path, event_config, start_time, end_time)
+    payload = build_event_payload(results, config_path, event_config, start_time, end_time, analysis_zone)
     payload["database"] = {"path": str(database_path), "read_only": True}
     return payload
 

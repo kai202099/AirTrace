@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end", metavar="ISO_UTC", help="explicit replay end time")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--analysis-zone", choices=("core", "context"), default="core", help="target zone for analysis; default is the production Core Zone")
     parser.add_argument("--lookback-hours", type=float, default=2.0, help="anomaly v1 source lookback; must cover its 60-minute baseline")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
@@ -71,6 +72,7 @@ def main() -> int:
             end_time=end,
             anomaly_lookback_hours=max(1.0, args.lookback_hours),
             event_config=EventConfig(),
+            analysis_zone=args.analysis_zone,
         )
         output_dir = args.output_dir
         json_path = output_dir / "latest_events.json"
@@ -85,9 +87,15 @@ def main() -> int:
         write_event_timeline(payload, timeline_path)
 
         summary = payload["summary"]
+        if args.analysis_zone == "context":
+            print("CONTEXT DIAGNOSTIC REPLAY")
+            print("NOT PRODUCTION EVENT DETECTION")
         print("AirTrace PM2.5 Spatiotemporal Event Clustering v1")
         print(f"Analysis window: {payload['analysis_window']['start_time_utc']} → {payload['analysis_window']['end_time_utc']}")
         print(f"Bins analyzed: {summary['bins_analyzed']}")
+        if args.analysis_zone == "context":
+            print(f"Context sensors: {summary['context_sensor_count']}")
+            print(f"Usable sensors: {summary['usable_sensor_count']}")
         print(f"Real seed count: {summary['seed_count']}")
         print(f"Event count: {summary['event_count']}")
         print(f"Transient count: {summary['transient_count']}")
