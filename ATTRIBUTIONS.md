@@ -16,3 +16,12 @@ The frontend also uses the open-source packages listed in
 MapLibre GL JS, Vite, TypeScript, Vitest, and jsdom. Their package metadata and
 licenses are retained in `frontend/package-lock.json`; consult those upstream
 projects for their current terms.
+
+## Dataset licensing
+
+Third-party datasets and derived data snapshots remain subject to their
+respective providers' terms and are not relicensed under Apache-2.0 unless
+explicitly stated.
+
+The Apache-2.0 license in this repository applies to AirTrace's original
+software and documentation, not automatically to third-party data.

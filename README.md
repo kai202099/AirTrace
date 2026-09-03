@@ -7,8 +7,18 @@ evidence-supported candidate source regions.
 It does **not** determine legal responsibility or prove that a facility caused
 an event.
 
-> Screenshot placeholder: capture the local workspace after starting the API
-> and frontend, then add the image here for a public demo page.
+![AirTrace replay interface showing a detected anomaly, wind context, and candidate source evidence](docs/images/airtrace-replay.png)
+
+## Why AirTrace
+
+Taiwan's dense micro-air-sensor network can reveal local PM2.5 patterns, but a
+concentration spike alone does not identify a source. AirTrace combines
+spatial and temporal sensor signals with reconstructed weather, backward
+particle tracing, and public facility, CEMS, and fire evidence to show where a
+candidate source region is supported and where uncertainty remains.
+
+The current pilot region is the Wugu/Xinzhuang context around the configured
+Core Zone; it is not a nationwide attribution service.
 
 ## Windows quick start
 
@@ -35,17 +45,6 @@ are not part of a clone or release.
 
 Use `test.bat` to run the Python tests, `compileall`, frontend tests, and the
 frontend production build with the local environment.
-
-## Why AirTrace
-
-Taiwan's dense micro-air-sensor network can reveal local PM2.5 patterns, but a
-concentration spike alone does not identify a source. AirTrace combines
-spatial and temporal sensor signals with reconstructed weather, backward
-particle tracing, and public facility, CEMS, and fire evidence to show where a
-candidate source region is supported and where uncertainty remains.
-
-The current pilot region is the Wugu/Xinzhuang context around the configured
-Core Zone; it is not a nationwide attribution service.
 
 ## How it works
 
@@ -225,6 +224,19 @@ deployment. Authentication and rate limiting are intentionally out of scope.
 should not be exposed directly to an untrusted public internet without
 authentication and rate limiting. This MVP is not a multi-user SaaS backend.
 
+## Development note
+
+AirTrace was developed with assistance from AI coding tools, including
+OpenAI ChatGPT and Codex, for design discussion, implementation, debugging,
+testing, and documentation.
+
+Project direction, system design, validation choices, and the final submitted
+results were reviewed and directed by the author.
+
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+AirTrace's original software and documentation are licensed under Apache-2.0.
+See [`LICENSE`](LICENSE).
+
+Third-party datasets and derived data snapshots remain subject to their
+respective providers' terms. See [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md).
