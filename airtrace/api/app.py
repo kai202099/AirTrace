@@ -12,7 +12,6 @@ import csv
 import json
 import math
 import threading
-import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -20,13 +19,13 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable
 
-import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from airtrace.analysis.anomaly import parse_iso_utc
 from airtrace.config import firms_map_key_configured, get_cors_origins
+from airtrace.db import ReadOnlyDatabaseBusyError, connect_read_only, is_transient_lock_error
 from airtrace.provenance import is_synthetic_manifest
 from airtrace.pipeline import (
     DEFAULT_CONFIG,
@@ -45,10 +44,6 @@ DEFAULT_FIXTURE_ROOT = ROOT / "fixtures" / "demo"
 
 FRESH_SECONDS = 10 * 60
 STALE_SECONDS = 30 * 60
-DB_RETRY_COUNT = 3
-DB_RETRY_DELAY_SECONDS = 0.08
-
-
 class AnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -122,25 +117,18 @@ def _db_read(path: Path, operation: Callable[[Any], Any]) -> tuple[Any | None, s
 
     if not path.exists():
         return None, "UNAVAILABLE"
-    last_error: Exception | None = None
-    for attempt in range(DB_RETRY_COUNT):
-        connection = None
-        try:
-            connection = duckdb.connect(str(path), read_only=True)
-            connection.execute("SET TimeZone='UTC'")
-            return operation(connection), None
-        except Exception as exc:  # DuckDB exposes lock errors by version-specific type/message.
-            last_error = exc
-            if "lock" not in str(exc).lower() and attempt == 0:
-                break
-            if attempt + 1 < DB_RETRY_COUNT:
-                time.sleep(DB_RETRY_DELAY_SECONDS * (attempt + 1))
-        finally:
-            if connection is not None:
-                connection.close()
-    if last_error and "lock" in str(last_error).lower():
+    try:
+        connection = connect_read_only(path)
+    except ReadOnlyDatabaseBusyError:
         return None, "DB_LOCKED"
-    return None, "UNAVAILABLE"
+    except Exception:
+        return None, "UNAVAILABLE"
+    try:
+        return operation(connection), None
+    except Exception as exc:
+        return None, "DB_LOCKED" if is_transient_lock_error(exc) else "UNAVAILABLE"
+    finally:
+        connection.close()
 
 
 def _load_region() -> dict[str, Any]:

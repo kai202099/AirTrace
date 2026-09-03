@@ -38,6 +38,9 @@ def test_runs_and_synthetic_run_detail_are_manifest_backed(client: TestClient) -
     assert detail.status_code == 200
     assert detail.json()["manifest"]["produced_artifacts"]["manifest"] == "manifest.json"
     assert detail.json()["incidents"][0]["incident"]["trace"]["status"] == "TRACE_COMPLETE"
+    incident = detail.json()["incidents"][0]
+    assert {row["station_id"] for row in incident["membership"]} == {"a0", "a1"}
+    assert incident["incident"]["trace"]["wind_diagnostics"]["map_arrows"][0]["u_east_mps"] == 1.0
 
 
 def test_analyze_rejects_naive_timestamps(client: TestClient) -> None:

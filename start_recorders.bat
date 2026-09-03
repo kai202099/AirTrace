@@ -21,6 +21,7 @@ if not exist "%ROOT%scripts\record_weather.py" (
 )
 
 echo AirTrace recorders
+echo Python executable: %VENV_PYTHON%
 if not exist "%ROOT%.env" echo WARNING: .env is missing. Recorder API keys are loaded by the existing AirTrace configuration code; no credentials are printed by this helper.
 echo Recorders write local ignored DuckDB files under data\ and raw snapshots under data\raw\.
 echo.

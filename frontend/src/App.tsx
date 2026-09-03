@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import maplibregl, { type GeoJSONSource, type Map as MapInstance } from 'maplibre-gl'
 import { createAnalysis, getIncident, getJob, getLive, getRun, getRuns, getStatus } from './api'
-import { formatAge, formatReplayWindow, formatTaipei, incidentFromDetail, isSynthetic, runSummaries, stageLabel } from './adapters'
+import { eventSensorRows, facilityMapRows, formatAge, formatReplayWindow, formatTaipei, incidentFromDetail, isSynthetic, OSM_ATTRIBUTION, OSM_RASTER_PAINT, runSummaries, sourceEvidenceFeatures, stageLabel, windArrowFeatures } from './adapters'
 import type { IncidentDetail, IncidentSummary, LivePayload, Mode, RunDetail, RunIndex, Sensor } from './types'
 
-type LayerFlags = { sensors: boolean; heatmap: boolean; boundaries: boolean; events: boolean; wind: boolean; trace: boolean; facilities: boolean; firms: boolean }
-const defaultLayers: LayerFlags = { sensors: true, heatmap: true, boundaries: true, events: true, wind: false, trace: false, facilities: false, firms: false }
+type LayerFlags = { sensors: boolean; heatmap: boolean; boundaries: boolean; events: boolean; anomalies: boolean; wind: boolean; trace: boolean; facilities: boolean; firms: boolean }
+const defaultLayers: LayerFlags = { sensors: true, heatmap: true, boundaries: true, events: true, anomalies: true, wind: true, trace: true, facilities: false, firms: false }
 
 const center = [121.46, 25.06] as [number, number]
 const geo = (features: any[]) => ({ type: 'FeatureCollection', features }) as any
 const point = (coordinates: [number, number], properties: Record<string, any> = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates }, properties })
-const line = (coordinates: [number, number][], properties: Record<string, any> = {}) => ({ type: 'Feature', geometry: { type: 'LineString', coordinates }, properties })
 
 function MapView({ live, incident, run, sensorData, synthetic, layers, onSelectSensor, onToggleLayer }: { live: LivePayload | null; incident: IncidentDetail | null; run: RunIndex | null; sensorData: Sensor[] | null; synthetic: boolean; layers: LayerFlags; onSelectSensor: (sensor: any) => void; onToggleLayer: (layer: keyof LayerFlags) => void }) {
   const node = useRef<HTMLDivElement>(null)
@@ -26,8 +25,8 @@ function MapView({ live, incident, run, sensorData, synthetic, layers, onSelectS
       maxZoom: 17,
       style: {
         version: 8,
-        sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>' } },
-        layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+        sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: OSM_ATTRIBUTION } },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm', paint: OSM_RASTER_PAINT }],
       },
     })
     instance.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right')
@@ -43,39 +42,53 @@ function MapView({ live, incident, run, sensorData, synthetic, layers, onSelectS
     const sensors = (sensorData ?? live.sensors.sensors).filter((sensor) => Number.isFinite(sensor.lon) && Number.isFinite(sensor.lat))
     const event = incident?.incident.event
     const eventPoint = event?.latest_centroid ?? event?.initial_centroid
+    const eventAnchor = eventPoint && Number.isFinite(Number(eventPoint.lon)) && Number.isFinite(Number(eventPoint.lat)) ? { lon: Number(eventPoint.lon), lat: Number(eventPoint.lat) } : null
+    const anomalySensors = eventSensorRows(sensors, incident?.membership ?? [])
     const trace = incident?.incident.trace ?? {}
     const boundaryFeatures = Object.entries({ Context: live.region.context_bbox, Core: live.region.core_bbox }).map(([name, bbox]: [string, any]) => ({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[bbox.west, bbox.south], [bbox.east, bbox.south], [bbox.east, bbox.north], [bbox.west, bbox.north], [bbox.west, bbox.south]]] }, properties: { name } }))
     const sensorFeatures = sensors.map((sensor) => point([sensor.lon, sensor.lat], { ...sensor, value: sensor.pm25 ?? 0 }))
-    const eventFeatures = eventPoint ? [point([eventPoint.lon, eventPoint.lat], { label: 'Event centroid' })] : []
-    const traceFeatures = (trace.display_trajectories ?? []).map((trajectory: any) => line((trajectory.points ?? []).map((p: any) => [p.lon, p.lat]), { station_id: trajectory.station_id }))
+    const anomalyFeatures = anomalySensors.map((sensor) => point([sensor.lon, sensor.lat], { ...sensor, event_member: true, value: sensor.pm25 ?? 0 }))
+    const eventFeatures = eventAnchor ? [point([eventAnchor.lon, eventAnchor.lat], { label: 'Detected anomaly', marker_type: 'event_centroid' })] : []
+    const evidenceGridFeatures = sourceEvidenceFeatures(trace)
     const regionFeatures = (trace.candidate_source_regions ?? []).map((region: any) => ({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[region.bounds.west, region.bounds.south], [region.bounds.east, region.bounds.south], [region.bounds.east, region.bounds.north], [region.bounds.west, region.bounds.north], [region.bounds.west, region.bounds.south]]] }, properties: { rank: region.rank, score: region.peak_score } }))
-    const windFeatures = (trace.wind_diagnostics?.map_arrows ?? []).map((arrow: any) => line([[arrow.lon ?? center[0] - (arrow.u_east_mps ?? 0) * 0.001, arrow.lat ?? center[1] - (arrow.v_north_mps ?? 0) * 0.001], [arrow.lon ?? center[0], arrow.lat ?? center[1]]], { quality: 'wind' }))
-    const facilities = (incident?.facilities ?? []).filter((row) => Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat))).map((row) => point([Number(row.lon), Number(row.lat)], row))
+    const windFeatures = windArrowFeatures(trace.wind_diagnostics?.map_arrows)
+    const facilities = facilityMapRows(incident?.facilities ?? []).map((row) => point([Number(row.lon), Number(row.lat)], row))
     const fires = (incident?.fires ?? []).filter((row) => Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat))).map((row) => point([Number(row.lon), Number(row.lat)], row))
-    const sourceData: Record<string, any> = { sensors: geo(sensorFeatures), events: geo(eventFeatures), boundaries: geo(boundaryFeatures), trace: geo(traceFeatures), regions: geo(regionFeatures), wind: geo(windFeatures), facilities: geo(facilities), firms: geo(fires) }
+    const sourceData: Record<string, any> = { sensors: geo(sensorFeatures), anomalies: geo(anomalyFeatures), events: geo(eventFeatures), boundaries: geo(boundaryFeatures), evidenceGrid: geo(evidenceGridFeatures), regions: geo(regionFeatures), wind: geo(windFeatures), facilities: geo(facilities), firms: geo(fires) }
     for (const [name, data] of Object.entries(sourceData)) {
       const source = instance.getSource(name) as GeoJSONSource | undefined
       if (source) source.setData(data)
       else instance.addSource(name, { type: 'geojson', data })
     }
-    if (!instance.getLayer('sensor-heatmap')) instance.addLayer({ id: 'sensor-heatmap', type: 'heatmap', source: 'sensors', maxzoom: 12.5, paint: { 'heatmap-weight': ['interpolate', ['linear'], ['get', 'value'], 0, 0, 50, 1], 'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 9, 16, 13, 34], 'heatmap-opacity': 0.58, 'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(42, 62, 78, 0)', 0.35, '#2f7e8f', 0.7, '#d8a451', 1, '#d96e4d'] } })
-    if (!instance.getLayer('sensor-points')) instance.addLayer({ id: 'sensor-points', type: 'circle', source: 'sensors', minzoom: 12.2, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6], 'circle-color': ['match', ['get', 'freshness'], 'fresh', '#80c7a7', 'stale', '#d8a451', 'offline', '#8c99a5', '#b86f6d'], 'circle-opacity': 0.9, 'circle-stroke-color': '#0d151d', 'circle-stroke-width': 1 } })
+    if (!instance.getLayer('sensor-heatmap')) instance.addLayer({ id: 'sensor-heatmap', type: 'heatmap', source: 'sensors', maxzoom: 12.5, paint: { 'heatmap-weight': ['interpolate', ['linear'], ['get', 'value'], 0, 0, 50, 1], 'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 9, 16, 13, 34], 'heatmap-opacity': 0.48, 'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(42, 62, 78, 0)', 0.35, '#2f7e8f', 0.7, '#d8a451', 1, '#d96e4d'] } })
+    if (!instance.getLayer('sensor-points')) instance.addLayer({ id: 'sensor-points', type: 'circle', source: 'sensors', minzoom: 12.2, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6], 'circle-color': ['match', ['get', 'freshness'], 'fresh', '#80c7a7', 'stale', '#d8a451', 'offline', '#8c99a5', '#b86f6d'], 'circle-opacity': 0.62, 'circle-stroke-color': '#0d151d', 'circle-stroke-width': 1 } })
     if (!instance.getLayer('boundaries')) instance.addLayer({ id: 'boundaries', type: 'line', source: 'boundaries', paint: { 'line-color': ['match', ['get', 'name'], 'Core', '#8fb8c8', '#718391'], 'line-width': ['match', ['get', 'name'], 'Core', 2, 1], 'line-dasharray': [2, 2], 'line-opacity': 0.75 } })
-    if (!instance.getLayer('event-points')) instance.addLayer({ id: 'event-points', type: 'circle', source: 'events', paint: { 'circle-radius': 10, 'circle-color': '#d8a451', 'circle-opacity': 0.88, 'circle-stroke-color': '#f5dfad', 'circle-stroke-width': 2 } })
-    if (!instance.getLayer('trace-lines')) instance.addLayer({ id: 'trace-lines', type: 'line', source: 'trace', paint: { 'line-color': '#d8a451', 'line-width': 2, 'line-opacity': 0.8 } })
-    if (!instance.getLayer('source-regions')) instance.addLayer({ id: 'source-regions', type: 'fill', source: 'regions', paint: { 'fill-color': '#d8a451', 'fill-opacity': 0.22, 'fill-outline-color': '#d8a451' } })
-    if (!instance.getLayer('wind-lines')) instance.addLayer({ id: 'wind-lines', type: 'line', source: 'wind', paint: { 'line-color': '#8fb8c8', 'line-width': 2, 'line-opacity': 0.75 } })
-    if (!instance.getLayer('facility-points')) instance.addLayer({ id: 'facility-points', type: 'circle', source: 'facilities', paint: { 'circle-radius': 5, 'circle-color': '#b9a6d9', 'circle-stroke-color': '#eee5ff', 'circle-stroke-width': 1 } })
+    if (!instance.getLayer('source-evidence-grid')) instance.addLayer({ id: 'source-evidence-grid', type: 'fill', source: 'evidenceGrid', paint: { 'fill-color': ['interpolate', ['linear'], ['get', 'score'], 0, '#75a8b1', 0.5, '#d8a451', 1, '#d96e4d'], 'fill-opacity': ['interpolate', ['linear'], ['get', 'score'], 0, 0.04, 1, 0.28], 'fill-outline-color': '#9fc7ca' } })
+    if (!instance.getLayer('source-regions')) instance.addLayer({ id: 'source-regions', type: 'fill', source: 'regions', paint: { 'fill-color': '#d8a451', 'fill-opacity': 0.12 } })
+    if (!instance.getLayer('source-region-outlines')) instance.addLayer({ id: 'source-region-outlines', type: 'line', source: 'regions', layout: { 'line-join': 'round' }, paint: { 'line-color': '#d8a451', 'line-width': 2.5, 'line-opacity': 0.92 } })
+    if (!instance.getLayer('wind-lines')) instance.addLayer({ id: 'wind-lines', type: 'line', source: 'wind', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#087eaa', 'line-width': 3, 'line-opacity': 0.9 } })
+    if (!instance.getLayer('facility-points')) instance.addLayer({ id: 'facility-points', type: 'circle', source: 'facilities', paint: { 'circle-radius': 4, 'circle-color': '#8775a8', 'circle-opacity': 0.78, 'circle-stroke-color': '#eee5ff', 'circle-stroke-width': 1 } })
+    if (!instance.getLayer('facility-labels')) instance.addLayer({ id: 'facility-labels', type: 'symbol', source: 'facilities', layout: { 'text-field': ['get', 'map_label'], 'text-size': 10, 'text-offset': [0, 1.1], 'text-allow-overlap': true }, paint: { 'text-color': '#43365d', 'text-halo-color': '#f4efff', 'text-halo-width': 1.2 } })
     if (!instance.getLayer('firms-points')) instance.addLayer({ id: 'firms-points', type: 'circle', source: 'firms', paint: { 'circle-radius': 5, 'circle-color': '#d96e4d', 'circle-stroke-color': '#ffe1d7', 'circle-stroke-width': 1 } })
-    const visibility: Record<string, boolean> = { 'sensor-heatmap': layers.heatmap, 'sensor-points': layers.sensors, boundaries: layers.boundaries, 'event-points': layers.events, 'trace-lines': layers.trace, 'source-regions': layers.trace, 'wind-lines': layers.wind, 'facility-points': layers.facilities, 'firms-points': layers.firms }
+    if (!instance.getLayer('anomaly-halo')) instance.addLayer({ id: 'anomaly-halo', type: 'circle', source: 'anomalies', minzoom: 10.5, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 14], 'circle-color': '#d8a451', 'circle-opacity': 0.18, 'circle-stroke-color': '#f5dfad', 'circle-stroke-opacity': 0.95, 'circle-stroke-width': 2 } })
+    if (!instance.getLayer('anomaly-points')) instance.addLayer({ id: 'anomaly-points', type: 'circle', source: 'anomalies', minzoom: 10.5, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 16, 7], 'circle-color': '#d8a451', 'circle-opacity': 0.96, 'circle-stroke-color': '#fff3cf', 'circle-stroke-width': 1.5 } })
+    if (!instance.getLayer('event-points')) instance.addLayer({ id: 'event-points', type: 'circle', source: 'events', paint: { 'circle-radius': 11, 'circle-color': '#d8a451', 'circle-opacity': 0.9, 'circle-stroke-color': '#fff3cf', 'circle-stroke-width': 3 } })
+    const visibility: Record<string, boolean> = { 'sensor-heatmap': layers.heatmap, 'sensor-points': layers.sensors, boundaries: layers.boundaries, 'source-evidence-grid': layers.trace, 'source-regions': layers.trace, 'source-region-outlines': layers.trace, 'wind-lines': layers.wind, 'facility-points': layers.facilities, 'facility-labels': layers.facilities, 'firms-points': layers.firms, 'anomaly-halo': layers.anomalies, 'anomaly-points': layers.anomalies, 'event-points': layers.events }
     for (const [id, visible] of Object.entries(visibility)) if (instance.getLayer(id)) instance.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
     const click = (event: maplibregl.MapLayerMouseEvent) => { const feature = event.features?.[0]; if (feature?.properties) onSelectSensor(feature.properties) }
+    const facilityClick = (event: maplibregl.MapLayerMouseEvent) => { const feature = event.features?.[0]; if (feature?.properties) onSelectSensor({ ...feature.properties, __kind: 'facility' }) }
     instance.off('click', 'sensor-points', click)
+    instance.off('click', 'anomaly-points', click)
+    instance.off('click', 'facility-points', facilityClick)
+    instance.off('click', 'facility-labels', facilityClick)
     instance.on('click', 'sensor-points', click)
+    instance.on('click', 'anomaly-points', click)
+    instance.on('click', 'facility-points', facilityClick)
+    instance.on('click', 'facility-labels', facilityClick)
     instance.getCanvas().style.cursor = ''
-    return () => { instance.off('click', 'sensor-points', click) }
+    return () => { instance.off('click', 'sensor-points', click); instance.off('click', 'anomaly-points', click); instance.off('click', 'facility-points', facilityClick); instance.off('click', 'facility-labels', facilityClick) }
   }, [live, incident, layers, mapReady, onSelectSensor])
-  return <div className="map-wrap"><div ref={node} className="map" />{run?.mode === 'REPLAY' && !synthetic && <div className="replay-map-banner"><b>{run.diagnostic ? 'REPLAY — CONTEXT DIAGNOSTIC' : 'REPLAY — HISTORICAL ANALYSIS'}</b>{run.diagnostic && <strong>NOT PRODUCTION EVENT DETECTION</strong>}<span>{formatReplayWindow(run.analysis_start_utc, run.analysis_end_utc)} · {run.analysis_zone === 'context' ? 'Context' : 'Core'} · {run.run_id}</span><small>Loaded just now</small></div>}<div className="map-controls"><span className="eyebrow">LAYERS</span>{(['sensors', 'heatmap', 'boundaries', 'events', 'wind', 'trace', 'facilities', 'firms'] as (keyof LayerFlags)[]).map((layer) => <button key={layer} className={layers[layer] ? 'on' : ''} onClick={() => onToggleLayer(layer)} disabled={(layer === 'events' || layer === 'trace') && !incident || layer === 'facilities' && !(incident?.facilities.length) || layer === 'firms' && !(incident?.fires.length)}>{layer === 'trace' ? 'Source evidence' : layer === 'firms' ? 'FIRMS' : layer[0].toUpperCase() + layer.slice(1)}</button>)}</div><div className="map-key"><span><i className="dot sensor" />Sensors</span><span><i className="dot event" />Event</span><span><i className="dot trace" />Source evidence</span></div></div>
+  return <div className="map-wrap"><div ref={node} className="map" />{run?.mode === 'REPLAY' && !synthetic && <div className="replay-map-banner"><b>{run.diagnostic ? 'REPLAY — CONTEXT DIAGNOSTIC' : 'REPLAY — HISTORICAL ANALYSIS'}</b>{run.diagnostic && <strong>NOT PRODUCTION EVENT DETECTION</strong>}<span>{formatReplayWindow(run.analysis_start_utc, run.analysis_end_utc)} · {run.analysis_zone === 'context' ? 'Context' : 'Core'} · {run.run_id}</span><small>Loaded just now</small></div>}<div className="map-controls"><span className="eyebrow">LAYERS</span>{(['sensors', 'heatmap', 'boundaries', 'events', 'anomalies', 'wind', 'trace', 'facilities', 'firms'] as (keyof LayerFlags)[]).map((layer) => <button key={layer} className={layers[layer] ? 'on' : ''} onClick={() => onToggleLayer(layer)} disabled={(layer === 'events' || layer === 'anomalies' || layer === 'trace') && !incident || layer === 'facilities' && !(incident?.facilities.length) || layer === 'firms' && !(incident?.fires.length)}>{layer === 'trace' ? 'Source evidence' : layer === 'firms' ? 'FIRMS' : layer[0].toUpperCase() + layer.slice(1)}</button>)}</div><div className="map-key"><span><i className="dot sensor" />Sensors</span><span><i className="dot event" />Detected anomaly</span><span><i className="wind-arrow" />Wind TO</span><span><i className="dot trace" />Relative source evidence · not probability</span><span><i className="facility-key" />F1–F5 candidate facilities</span></div></div>
 }
 
 function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span> }
@@ -86,6 +99,11 @@ function IncidentRail({ incidents, selected, onSelect, synthetic, replay }: { in
 }
 
 function Inspector({ incident, sensor, run }: { incident: IncidentDetail | null; sensor: any; run: RunIndex | null }) {
+  if (sensor?.__kind === 'facility') {
+    const evidenceScore = sensor.evidence_score == null ? '—' : Number(sensor.evidence_score).toFixed(3)
+    const distance = sensor.distance_to_top_source_region_km == null ? '—' : `${Number(sensor.distance_to_top_source_region_km).toFixed(2)} km`
+    return <aside className="inspector"><div className="inspector-head"><span className="eyebrow">FACILITY INSPECTOR</span><h2>{sensor.map_label ?? `F${sensor.rank ?? '—'}`}</h2><Badge tone="blue">candidate evidence</Badge></div><div className="detail-block"><h3>Facility</h3><p>{sensor.name || sensor.facility_name || 'Unnamed facility'}</p><p className="muted">{sensor.ems_no || 'EMS number unavailable'} · {sensor.industry || 'Industry unavailable'}</p></div><section className="detail-section"><h3>Relative evidence</h3><div className="inspector-grid"><Metric label="Evidence score" value={evidenceScore} hint="relative within this event" /><Metric label="Top source region distance" value={distance} /></div></section><p className="muted disclaimer-small">This is a ranked candidate facility near the backtraced evidence. It is not the detected anomaly and does not establish that this facility caused it.</p></aside>
+  }
   if (sensor) { const historical = run?.mode === 'REPLAY' || sensor.freshness === 'historical'; return <aside className="inspector"><div className="inspector-head"><span className="eyebrow">SENSOR</span><h2>{sensor.station_id}</h2><Badge tone={historical ? 'blue' : sensor.freshness === 'fresh' ? 'green' : 'amber'}>{historical ? 'historical' : sensor.freshness}</Badge></div><div className="inspector-grid"><Metric label="PM2.5" value={sensor.pm25 == null ? '—' : `${Number(sensor.pm25).toFixed(1)} µg/m³`} /><Metric label={historical ? 'Observation' : 'Updated'} value={formatTaipei(sensor.timestamp_utc)} hint={historical ? 'Historical observation time' : sensor.age_minutes != null ? formatAge(sensor.age_minutes) : undefined} /></div><div className="detail-block"><h3>Station</h3><p>{sensor.station_name || 'Air quality micro-sensor'}</p><p className="muted">{sensor.lat?.toFixed?.(5)}, {sensor.lon?.toFixed?.(5)}</p></div><p className="muted disclaimer-small">{historical ? 'Historical sensor observation from this replay window.' : 'A sensor observation is contextual evidence, not an attribution.'}</p></aside> }
   if (!incident) return <aside className="inspector"><div className="inspector-head"><span className="eyebrow">INSPECTOR</span><h2>Nothing selected</h2></div><p className="muted">Select an incident or zoom into the map to inspect a sensor. The map remains the primary workspace.</p><div className="status-callout"><b>System is watching</b><span>{run?.event_count ?? 0} events in the latest analysis window.</span></div></aside>
   const item = incidentFromDetail(incident)

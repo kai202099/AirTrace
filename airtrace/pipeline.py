@@ -17,9 +17,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-import duckdb
-
 from airtrace.config import get_firms_map_key
+from airtrace.db import connect_read_only
 from airtrace.analysis.anomaly import (
     AnomalyConfig,
     DetectionResult,
@@ -168,7 +167,7 @@ def _db_span(path: Path, table: str, column: str) -> dict[str, Any]:
     result: dict[str, Any] = {"path": public_path(path), "available": path.exists(), "start_utc": None, "end_utc": None, "row_count": None}
     if not path.exists():
         return result
-    connection = duckdb.connect(str(path), read_only=True)
+    connection = connect_read_only(path)
     try:
         row = connection.execute(f'SELECT min("{column}"), max("{column}"), count(*) FROM "{table}"').fetchone()
         result.update({"start_utc": _iso(row[0]), "end_utc": _iso(row[1]), "row_count": int(row[2])})
@@ -182,7 +181,7 @@ def _db_span(path: Path, table: str, column: str) -> dict[str, Any]:
 def _load_table(path: Path, loader: Callable[[Any], list[dict[str, Any]]]) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    connection = duckdb.connect(str(path), read_only=True)
+    connection = connect_read_only(path)
     try:
         return loader(connection)
     finally:
@@ -297,7 +296,7 @@ def _reference_status(path: Path, start: datetime, end: datetime) -> dict[str, A
     result = {"path": public_path(path), "status": "REFERENCE_AQ_UNAVAILABLE", "rows_in_window": 0}
     if not path.exists():
         return result
-    connection = duckdb.connect(str(path), read_only=True)
+    connection = connect_read_only(path)
     try:
         count = connection.execute(
             'SELECT count(*) FROM "reference_air_observation" WHERE "publish_time_utc" >= ? AND "publish_time_utc" <= ?',

@@ -213,6 +213,25 @@ def save_poll_health(connection: duckdb.DuckDBPyConnection, started: datetime, c
     )
 
 
+def record_poll_health(database_path: Path, started: datetime, completed: datetime, values: dict[str, Any]) -> None:
+    """Persist one poll-health row with a connection scoped to that write."""
+
+    connection: duckdb.DuckDBPyConnection | None = None
+    try:
+        connection = duckdb.connect(str(database_path))
+        ensure_schema(connection)
+        connection.begin()
+        try:
+            save_poll_health(connection, started, completed, values)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def print_poll(values: dict[str, Any], started: datetime, duration: float) -> None:
     print("AirTrace PM2.5 Recorder")
     print(f"Poll time: {iso_utc(started)}")
@@ -238,9 +257,8 @@ def print_poll(values: dict[str, Any], started: datetime, duration: float) -> No
 def run_once(config_path: Path, database_path: Path, raw_root: Path, timeout: float) -> bool:
     started = utc_now()
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = duckdb.connect(str(database_path))
-    ensure_schema(connection)
     values: dict[str, Any] = {"success": False, "api_errors": 0}
+    completed = started
     try:
         region = RegionConfig.load(config_path)
         client = ApiClient(API_BASE_URL, timeout_seconds=timeout)
@@ -263,25 +281,38 @@ def run_once(config_path: Path, database_path: Path, raw_root: Path, timeout: fl
         except OSError as exc:
             values["error"] = f"raw snapshot write failed: {exc}"
             LOGGER.exception("raw snapshot write failed; normalized data will still be committed")
-        connection.begin()
+        completed = utc_now()
+        connection: duckdb.DuckDBPyConnection | None = None
         try:
+            connection = duckdb.connect(str(database_path))
+            ensure_schema(connection)
+            connection.begin()
             upsert_stations(connection, rows, started)
             values["inserted"], values["duplicates"] = insert_observations(connection, rows, started)
-            connection.commit()
             values["success"] = True
+            save_poll_health(connection, started, completed, values)
+            connection.commit()
         except Exception:
-            connection.rollback()
+            values["success"] = False
+            if connection is not None:
+                connection.rollback()
             raise
-    except (SensorThingsError, OSError, ValueError, KeyError) as exc:
+        finally:
+            if connection is not None:
+                connection.close()
+    except (SensorThingsError, OSError, ValueError, KeyError, duckdb.Error) as exc:
         values["api_errors"] = 1
         values["error"] = str(exc)
         LOGGER.error("poll failed; waiting for next cycle: %s", exc)
-    finally:
         completed = utc_now()
         try:
-            save_poll_health(connection, started, completed, values)
-        finally:
-            connection.close()
+            record_poll_health(database_path, started, completed, values)
+        except Exception as health_exc:
+            LOGGER.error("poll health write failed: %s", health_exc)
+    else:
+        # The success path records health in the same short transaction as the
+        # normalized rows; this timestamp is only used for the terminal report.
+        completed = max(completed, utc_now())
     print_poll(values, started, (completed - started).total_seconds())
     return bool(values["success"])
 

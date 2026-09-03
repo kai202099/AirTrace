@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Iterable
 
-import duckdb
+from airtrace.db import ReadOnlyDatabaseBusyError, connect_read_only
 
 
 EARTH_RADIUS_KM = 6371.0088
@@ -315,12 +315,14 @@ def _read_snapshot(
     """Read one consistent snapshot without creating or modifying a database."""
 
     try:
-        connection = duckdb.connect(str(database_path), read_only=True)
-    except Exception as exc:  # DuckDB's lock errors vary by version/platform.
+        connection = connect_read_only(database_path)
+    except ReadOnlyDatabaseBusyError as exc:
         raise RuntimeError(
-            f"READ_ONLY_ACCESS_FAILED: could not open {database_path} while recorder may be writing; "
-            "recorder was not stopped or modified. Details: " + str(exc)
+            f"READ_ONLY_ACCESS_FAILED: recorder is busy writing {database_path}; "
+            "replay waited a bounded interval and did not use stale data. " + str(exc)
         ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"READ_ONLY_ACCESS_FAILED: could not open {database_path}: {exc}") from exc
     try:
         stations = [
             dict(zip(("thing_id", "station_id", "station_name", "lat", "lon", "city", "township", "area_type"), row))
@@ -632,7 +634,12 @@ def latest_observation_time(database_path: Path) -> datetime:
     """Return the latest PM2.5 timestamp using a read-only connection."""
 
     try:
-        connection = duckdb.connect(str(database_path), read_only=True)
+        connection = connect_read_only(database_path)
+    except ReadOnlyDatabaseBusyError as exc:
+        raise RuntimeError(
+            f"READ_ONLY_ACCESS_FAILED: recorder is busy writing {database_path}; "
+            "replay waited a bounded interval and did not use stale data. " + str(exc)
+        ) from exc
     except Exception as exc:
         raise RuntimeError(f"READ_ONLY_ACCESS_FAILED: could not open {database_path}: {exc}") from exc
     try:

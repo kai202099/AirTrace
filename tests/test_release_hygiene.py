@@ -68,3 +68,10 @@ def test_api_manifest_has_public_paths_and_synthetic_provenance() -> None:
     assert not LOCAL_PATH.search(manifest_text)
     assert payload["manifest"]["provenance"]["type"] == "synthetic_validation"
     assert payload["manifest"]["produced_artifacts"]["incidents_detail"][0]["incident"].count("\\") == 0
+
+
+def test_recorder_launcher_is_pinned_to_repo_venv() -> None:
+    launcher = (ROOT / "start_recorders.bat").read_text(encoding="utf-8")
+    assert r".venv\Scripts\python.exe" in launcher
+    assert "Anaconda" not in launcher
+    assert "taskkill" not in launcher.lower()

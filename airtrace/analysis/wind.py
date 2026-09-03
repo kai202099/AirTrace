@@ -23,6 +23,7 @@ from typing import Any, Iterable, Sequence
 import duckdb
 
 from airtrace.data.cwa import haversine_km, iso_utc
+from airtrace.db import ReadOnlyDatabaseBusyError, connect_read_only
 
 
 UTC = timezone.utc
@@ -34,10 +35,6 @@ DEFAULT_MAX_STATIONS = 8
 DEFAULT_MAX_TEMPORAL_DISTANCE_MINUTES = 15.0
 DEFAULT_IDW_POWER = 2.0
 DEFAULT_IDW_EPSILON_KM = 0.1
-READ_RETRIES = 3
-READ_RETRY_DELAYS_SECONDS = (0.15, 0.35, 0.75)
-
-
 class WindFieldError(RuntimeError):
     """An expected wind-field data or configuration failure."""
 
@@ -348,21 +345,15 @@ def _row_time(value: Any) -> datetime | None:
 
 
 def _open_read_only(database_path: Path) -> duckdb.DuckDBPyConnection:
-    last_error: Exception | None = None
-    for attempt in range(READ_RETRIES + 1):
-        try:
-            connection = duckdb.connect(str(database_path), read_only=True)
-            connection.execute("SET TimeZone='UTC'")
-            return connection
-        except Exception as exc:  # DuckDB lock errors vary by version/platform.
-            last_error = exc
-            if attempt >= READ_RETRIES:
-                break
-            time_module.sleep(READ_RETRY_DELAYS_SECONDS[attempt])
-    raise WindFieldError(
-        f"READ_ONLY_ACCESS_FAILED: could not open {database_path} while recorder may be writing; "
-        f"recorder was not stopped or modified. Details: {last_error}"
-    ) from last_error
+    try:
+        return connect_read_only(database_path)
+    except ReadOnlyDatabaseBusyError as exc:
+        raise WindFieldError(
+            f"READ_ONLY_ACCESS_FAILED: recorder is busy writing {database_path}; "
+            "replay waited a bounded interval and did not use stale data. " + str(exc)
+        ) from exc
+    except Exception as exc:
+        raise WindFieldError(f"READ_ONLY_ACCESS_FAILED: could not open {database_path}: {exc}") from exc
 
 
 def _read_snapshot(database_path: Path, query_time: datetime, config: WindConfig) -> _Snapshot:
@@ -381,53 +372,49 @@ def _read_snapshot_range(
     if end_time < start_time:
         raise ValueError("snapshot end time must not precede start time")
     window = timedelta(minutes=config.maximum_temporal_distance_minutes)
-    last_error: Exception | None = None
-    for attempt in range(READ_RETRIES + 1):
-        connection: duckdb.DuckDBPyConnection | None = None
-        started = time_module.perf_counter()
-        try:
-            connection = _open_read_only(database_path)
-            station_rows = connection.execute(
-                "SELECT station_id, station_name, lat, lon FROM weather_station ORDER BY station_id"
-            ).fetchall()
-            stations = tuple(_Station(str(row[0]), str(row[1] or ""), row[2], row[3]) for row in station_rows)
-            observation_rows = connection.execute(
-                """
-                SELECT station_id, observation_time_utc, wind_from_deg, wind_speed_mps,
-                       wind_u_east_mps, wind_v_north_mps, wind_status, quality_flags
-                FROM weather_observation
-                WHERE observation_time_utc BETWEEN ? AND ?
-                ORDER BY station_id, observation_time_utc
-                """,
-                [start_time - window, end_time + window],
-            ).fetchall()
-            observations: dict[str, list[RawWindObservation]] = {}
-            for row in observation_rows:
-                observations.setdefault(str(row[0]), []).append(
-                    RawWindObservation(
-                        str(row[0]), utc_datetime(row[1]), row[2], row[3], row[4], row[5], str(row[6] or "invalid"),
-                        tuple(token for token in str(row[7] or "").split(";") if token),
-                    )
+    connection: duckdb.DuckDBPyConnection | None = None
+    started = time_module.perf_counter()
+    try:
+        connection = _open_read_only(database_path)
+        station_rows = connection.execute(
+            "SELECT station_id, station_name, lat, lon FROM weather_station ORDER BY station_id"
+        ).fetchall()
+        stations = tuple(_Station(str(row[0]), str(row[1] or ""), row[2], row[3]) for row in station_rows)
+        observation_rows = connection.execute(
+            """
+            SELECT station_id, observation_time_utc, wind_from_deg, wind_speed_mps,
+                   wind_u_east_mps, wind_v_north_mps, wind_status, quality_flags
+            FROM weather_observation
+            WHERE observation_time_utc BETWEEN ? AND ?
+            ORDER BY station_id, observation_time_utc
+            """,
+            [start_time - window, end_time + window],
+        ).fetchall()
+        observations: dict[str, list[RawWindObservation]] = {}
+        for row in observation_rows:
+            observations.setdefault(str(row[0]), []).append(
+                RawWindObservation(
+                    str(row[0]), utc_datetime(row[1]), row[2], row[3], row[4], row[5], str(row[6] or "invalid"),
+                    tuple(token for token in str(row[7] or "").split(";") if token),
                 )
-            span = connection.execute(
-                "SELECT min(observation_time_utc), max(observation_time_utc) FROM weather_observation"
-            ).fetchone()
-            if metrics is not None:
-                metrics["duckdb_read_seconds"] = metrics.get("duckdb_read_seconds", 0.0) + (time_module.perf_counter() - started)
-                metrics["duckdb_query_count"] = metrics.get("duckdb_query_count", 0.0) + 3.0
-            return _Snapshot(stations, {key: tuple(value) for key, value in observations.items()}, _row_time(span[0]), _row_time(span[1]))
-        except Exception as exc:
-            last_error = exc
-            if attempt >= READ_RETRIES:
-                break
-            time_module.sleep(READ_RETRY_DELAYS_SECONDS[attempt])
-        finally:
-            if connection is not None:
-                connection.close()
-    raise WindFieldError(
-        f"READ_ONLY_QUERY_FAILED: could not read {database_path} while recorder may be writing; "
-        f"recorder was not stopped or modified. Details: {last_error}"
-    ) from last_error
+            )
+        span = connection.execute(
+            "SELECT min(observation_time_utc), max(observation_time_utc) FROM weather_observation"
+        ).fetchone()
+        if metrics is not None:
+            metrics["duckdb_read_seconds"] = metrics.get("duckdb_read_seconds", 0.0) + (time_module.perf_counter() - started)
+            metrics["duckdb_query_count"] = metrics.get("duckdb_query_count", 0.0) + 3.0
+        return _Snapshot(stations, {key: tuple(value) for key, value in observations.items()}, _row_time(span[0]), _row_time(span[1]))
+    except WindFieldError:
+        raise
+    except Exception as exc:
+        raise WindFieldError(
+            f"READ_ONLY_QUERY_FAILED: could not read {database_path} while recorder may be writing; "
+            "replay did not use stale data. Details: " + str(exc)
+        ) from exc
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 class WindFieldSnapshot:
