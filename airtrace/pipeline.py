@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import os
 import re
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
@@ -20,6 +19,7 @@ from typing import Any, Callable, Mapping
 
 import duckdb
 
+from airtrace.config import get_firms_map_key
 from airtrace.analysis.anomaly import (
     AnomalyConfig,
     DetectionResult,
@@ -473,7 +473,7 @@ def run_analysis(
         evidence_stage = _Stage("evidence")
         stages.append(evidence_stage)
         evidence_results: dict[str, dict[str, Any]] = {}
-        map_key = firms_map_key if firms_map_key is not None else os.environ.get("FIRMS_MAP_KEY", "")
+        map_key = firms_map_key if firms_map_key is not None else get_firms_map_key()
         facilities: list[dict[str, Any]] = []
         cems: list[dict[str, Any]] = []
         cems_metadata = _read_cems_metadata(Path(cems_metadata_path))
@@ -585,6 +585,9 @@ def run_analysis(
         "event_count": len(incidents),
         "events": [_incident_row(item) for item in incidents],
         "stage_status": {stage.name: stage.status for stage in stages},
+        # Presentation-only snapshot for replay consumers. The analysis
+        # stages continue to use the same rows and semantics as before.
+        "historical_sensors": event_payload.get("context_sensors", []),
     }
     manifest_warnings = list(dict.fromkeys(warning for stage in stages for warning in stage.warnings))
     if analysis_zone == "context":

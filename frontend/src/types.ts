@@ -7,7 +7,7 @@ export type Sensor = {
   lon: number
   pm25: number | null
   timestamp_utc: string | null
-  freshness: 'fresh' | 'stale' | 'offline' | 'future_timestamp'
+  freshness: 'fresh' | 'stale' | 'offline' | 'future_timestamp' | 'historical'
   age_minutes: number | null
   source_status?: string
   quality_flags?: string
@@ -62,7 +62,7 @@ export type IncidentDetail = {
   fires: Record<string, string>[]
 }
 
-export type RunDetail = { manifest: Record<string, any>; summary: Record<string, any>; incidents: IncidentDetail[] }
+export type RunDetail = { manifest: Record<string, any>; summary: Record<string, any>; incidents: IncidentDetail[]; historical_sensors?: Sensor[] }
 
 export type LivePayload = {
   as_of_utc: string

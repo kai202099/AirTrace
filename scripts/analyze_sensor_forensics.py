@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import duckdb  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
+import airtrace.config  # noqa: E402,F401
 
 from airtrace.analysis.anomaly import (  # noqa: E402
     AnomalyConfig,
@@ -63,7 +63,6 @@ DEFAULT_REFERENCE_DATABASE = ROOT / "data" / "reference_air.duckdb"
 DEFAULT_CONFIG = ROOT / "config" / "pilot_region.json"
 DEFAULT_EVENTS = ROOT / "config" / "validation" / "known_fires_20260903.json"
 DEFAULT_OUTPUT = ROOT / "reports" / "validation" / "sensor_forensics"
-load_dotenv(ROOT / ".env")
 
 LAGS_MINUTES = (-12, -9, -6, -3, 0, 3, 6, 9, 12)
 BANDS = (

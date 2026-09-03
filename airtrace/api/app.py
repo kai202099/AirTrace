@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from airtrace.analysis.anomaly import parse_iso_utc
+from airtrace.config import firms_map_key_configured
 from airtrace.pipeline import (
     DEFAULT_CONFIG,
     DEFAULT_DATABASE,
@@ -268,6 +269,7 @@ def _status_payload() -> dict[str, Any]:
             "weather": _span(settings.weather_database_path, "weather_observation", "observation_time_utc"),
         },
         "cems": {"metadata": _json(settings.cems_metadata_path) if settings.cems_metadata_path.exists() else None},
+        "firms": {"configured": firms_map_key_configured()},
     }
 
 
@@ -314,6 +316,53 @@ def _read_csv(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(handle))
 
 
+def _historical_sensor_state(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the latest sensor observation at a replay cutoff, read-only."""
+
+    try:
+        cutoff = parse_iso_utc(str(manifest.get("analysis_end_utc")))
+        region = _load_region()
+        bbox = region["context_bbox"]
+    except (KeyError, TypeError, ValueError):
+        return []
+
+    def read(connection: Any) -> list[tuple[Any, ...]]:
+        return connection.execute(
+            """
+            WITH latest AS (
+              SELECT station_id, pm25_ugm3, phenomenon_time_utc, source_status, quality_flags,
+                     row_number() OVER (PARTITION BY station_id ORDER BY phenomenon_time_utc DESC) AS rn
+              FROM pm25_observation
+              WHERE phenomenon_time_utc <= ?
+            )
+            SELECT s.station_id, s.station_name, s.lat, s.lon, s.city, s.township,
+                   l.pm25_ugm3, l.phenomenon_time_utc, l.source_status, l.quality_flags
+            FROM sensor_station s
+            LEFT JOIN latest l ON l.station_id = s.station_id AND l.rn = 1
+            WHERE s.lat BETWEEN ? AND ? AND s.lon BETWEEN ? AND ?
+            ORDER BY s.station_id
+            """,
+            [cutoff, bbox["south"], bbox["north"], bbox["west"], bbox["east"]],
+        ).fetchall()
+
+    rows, error = _db_read(settings.database_path, read)
+    if error:
+        return []
+    sensors = []
+    for row in rows or []:
+        observation_time = _iso(row[7])
+        age = None if row[7] is None else max(0.0, (cutoff - row[7]).total_seconds() / 60)
+        sensors.append({
+            "station_id": row[0], "station_name": row[1], "lat": row[2], "lon": row[3],
+            "city": row[4], "township": row[5], "pm25": row[6],
+            "timestamp_utc": observation_time, "observation_time_utc": observation_time,
+            "freshness": "historical", "status": "historical",
+            "age_minutes": round(age, 2) if age is not None else None,
+            "source_status": row[8], "quality_flags": row[9],
+        })
+    return sensors
+
+
 def _read_run_detail(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     produced = manifest.get("produced_artifacts", {})
     summary = _json(_safe_child(path, produced.get("analysis_summary", "analysis_summary.json")))
@@ -325,7 +374,10 @@ def _read_run_detail(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
         incident = _json(incident_path)
         detail = {"incident": incident, "membership": _read_csv(_safe_child(path, artifact_set.get("membership", ""))), "source_evidence": _read_csv(_safe_child(path, artifact_set.get("source_evidence", ""))), "facilities": _read_csv(_safe_child(path, artifact_set.get("facility_candidates", ""))), "fires": _read_csv(_safe_child(path, artifact_set.get("fire_candidates", "")))}
         incidents.append(detail)
-    return {"manifest": manifest, "summary": summary, "incidents": incidents}
+    historical_sensors = summary.get("historical_sensors", [])
+    if not historical_sensors:
+        historical_sensors = _historical_sensor_state(manifest)
+    return {"manifest": manifest, "summary": summary, "incidents": incidents, "historical_sensors": historical_sensors}
 
 
 class JobStore:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAge, formatTaipei, incidentFromDetail } from './adapters'
+import { formatAge, formatReplayWindow, formatTaipei, incidentFromDetail } from './adapters'
 
 describe('data adapters', () => {
   it('converts incident artifact fields without inventing a probability', () => {
@@ -13,5 +13,9 @@ describe('data adapters', () => {
     expect(formatTaipei('2026-09-02T20:30:00Z')).toContain('04:30')
     expect(formatAge(12)).toBe('12 min ago')
     expect(formatAge(null)).toBe('No observation')
+  })
+
+  it('formats a replay window separately from live freshness', () => {
+    expect(formatReplayWindow('2026-09-02T16:45:00Z', '2026-09-02T20:30:00Z')).toContain('03 Sep 00:45–04:30')
   })
 })

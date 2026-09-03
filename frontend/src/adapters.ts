@@ -61,6 +61,21 @@ export const formatAge = (minutes: number | null | undefined) => {
   return `${(minutes / 60).toFixed(1)} h ago`
 }
 
+export const formatReplayWindow = (start: string | null | undefined, end: string | null | undefined) => {
+  const format = (value: string | null | undefined) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Taipei', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date)
+    const get = (type: string) => parts.find((part) => part.type === type)?.value ?? ''
+    return { dayMonth: `${get('day')} ${get('month').replace('Sept', 'Sep')}`, time: `${get('hour')}:${get('minute')}` }
+  }
+  const from = format(start)
+  const to = format(end)
+  if (typeof from === 'string' || typeof to === 'string') return `${typeof from === 'string' ? from : `${from.dayMonth} ${from.time}`}–${typeof to === 'string' ? to : `${to.dayMonth} ${to.time}`}`
+  return from.dayMonth === to.dayMonth ? `${from.dayMonth} ${from.time}–${to.time}` : `${from.dayMonth} ${from.time}–${to.dayMonth} ${to.time}`
+}
+
 export const stageLabel = (stage: string) => ({ anomaly: 'Analyzing sensors', events: 'Clustering event', wind_diagnostics: 'Estimating wind', backtrace: 'Tracing source', evidence: 'Matching evidence', complete: 'Complete' }[stage] ?? stage)
 
 export const isSynthetic = (run: RunIndex | undefined) => Boolean(run?.synthetic_validation || run?.run_id?.toLowerCase().includes('synthetic'))

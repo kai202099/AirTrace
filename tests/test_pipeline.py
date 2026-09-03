@@ -146,6 +146,16 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(snapshot["pilot_region"]["core_bbox"])
             self.assertTrue(manifest["produced_artifacts"]["incidents_detail"])
 
+    def test_firms_key_is_not_persisted_in_replay_artifacts(self):
+        secret = "unit-test-firms-secret"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("airtrace.pipeline.detect_anomalies_range", return_value=synthetic_results(("a",))), patch("scripts.match_source_evidence.fetch_firms", return_value=([], {"requested": True, "errors": [], "sources": {}})):
+                output = run_analysis(AT, AT, database_path=root / "missing.duckdb", output_root=root / "reports", config_path=ROOT / "config" / "pilot_region.json", backtrace_config=trace_config(root), facilities_database_path=root / "missing-facilities.duckdb", cems_database_path=root / "missing-cems.duckdb", firms_map_key=secret, now=AT)
+            report_dir = Path(output["output_dir"])
+            persisted = "\n".join(path.read_text(encoding="utf-8") for path in report_dir.rglob("*") if path.is_file())
+            self.assertNotIn(secret, persisted)
+
     def test_same_inputs_have_same_run_and_incident_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

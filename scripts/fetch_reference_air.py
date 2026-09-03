@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import duckdb  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
+import airtrace.config  # noqa: E402,F401
 
 from airtrace.data.moenv import (  # noqa: E402
     MOENV_API_URL,
@@ -37,7 +37,6 @@ LOGGER = logging.getLogger("airtrace.reference_air")
 DEFAULT_CONFIG = ROOT / "config" / "pilot_region.json"
 DEFAULT_DATABASE = ROOT / "data" / "reference_air.duckdb"
 DEFAULT_RAW_ROOT = ROOT / "data" / "raw" / "reference_air"
-load_dotenv(ROOT / ".env")
 
 
 def utc_now() -> datetime:

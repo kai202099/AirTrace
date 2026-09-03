@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import duckdb  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
+import airtrace.config  # noqa: E402,F401
 
 from airtrace.data.cems import CEMS_DATASET, ensure_schema, parse_cems_record, upsert_cems  # noqa: E402
 from airtrace.data.moenv import MoenvClient, MoenvError  # noqa: E402
@@ -27,7 +27,6 @@ DEFAULT_RAW_ROOT = ROOT / "data" / "raw" / "cems"
 DEFAULT_METADATA = ROOT / "data" / "cems_ingest_metadata.json"
 DEFAULT_YEAR_MONTH_MAX_PAGES = 100
 MAX_ROWS_ONLY_MAX_PAGES = 1000
-load_dotenv(ROOT / ".env")
 
 
 def resolve_limits(year_month: str | None, max_pages: int | None, max_rows: int | None) -> tuple[str | None, int]:

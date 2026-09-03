@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,8 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import duckdb  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
 
+from airtrace.config import get_firms_map_key  # noqa: E402
 from airtrace.analysis.evidence import (  # noqa: E402
     _event_time, _occupied_extent, match_source_evidence, write_evidence_json, write_evidence_map,
     write_facility_csv, write_fire_csv,
@@ -31,7 +30,6 @@ DEFAULT_FACILITIES = ROOT / "data" / "facilities.duckdb"
 DEFAULT_CEMS = ROOT / "data" / "cems.duckdb"
 DEFAULT_CEMS_METADATA = ROOT / "data" / "cems_ingest_metadata.json"
 DEFAULT_REGION = ROOT / "config" / "pilot_region.json"
-load_dotenv(ROOT / ".env")
 
 
 def _read_json(path: Path) -> dict:
@@ -116,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cems-db", type=Path, default=DEFAULT_CEMS)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--region-config", type=Path, default=DEFAULT_REGION)
-    parser.add_argument("--firms-map-key", default=os.environ.get("FIRMS_MAP_KEY", ""))
+    parser.add_argument("--firms-map-key", default=get_firms_map_key())
     parser.add_argument("--firms-window-hours", type=float, default=12.0)
     parser.add_argument("--source-buffer-km", type=float, default=3.0)
     parser.add_argument("--no-firms", action="store_true")
@@ -155,6 +153,7 @@ def main() -> int:
     region = _read_json(args.region_config) if args.region_config.exists() else None
     write_evidence_map(report, trace, map_path, region=region)
     print("AirTrace Source Evidence Fusion v1")
+    print(f"FIRMS configured: {bool(args.firms_map_key)}")
     print(f"Trace: {args.trace}")
     print(f"Trace type: {report['trace_type']}")
     print(f"Facilities loaded: {len(facilities)}; candidates after spatial prefilter: {report['facility_match_count_after_prefilter']}")
