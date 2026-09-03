@@ -18,7 +18,11 @@ from airtrace.provenance import is_synthetic_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "fixtures" / "demo" / "synthetic_full_event"
-LOCAL_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|(?:^|[\\/])Users[\\/]|(?:^|[\\/])home[\\/])", re.IGNORECASE)
+LOCAL_PATH = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])(?=[^\\/\s])"
+    r"|(?:^|[\\/])Users[\\/]|(?:^|[\\/])home[\\/]",
+    re.IGNORECASE,
+)
 
 
 def test_curated_fixture_has_no_local_path_leakage() -> None:
@@ -28,6 +32,20 @@ def test_curated_fixture_has_no_local_path_leakage() -> None:
         text = path.read_text(encoding="utf-8")
         assert not LOCAL_PATH.search(text), path
         assert str(ROOT) not in text, path
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (r"C:\Users\Example\AirTrace", True),
+        ("C:/Users/Example/AirTrace", True),
+        ("https://example.com", False),
+        ("http://example.com", False),
+        ("arbitrary text containing s:/", False),
+    ],
+)
+def test_windows_absolute_path_detection(value: str, expected: bool) -> None:
+    assert bool(LOCAL_PATH.search(value)) is expected
 
 
 def test_synthetic_provenance_survives_fixture_directory_rename(tmp_path: Path) -> None:
