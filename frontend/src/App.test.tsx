@@ -1,6 +1,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { LivePayload } from './types'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -56,6 +57,18 @@ const runs = Array.from({ length: 10 }, (_, index) => ({
   ...run,
   run_id: `run-${index + 1}`,
 }))
+
+const makeLivePayload = (): LivePayload => ({
+  as_of_utc: '2026-09-02T13:00:00Z',
+  region: {
+    context_bbox: { west: 121.3, south: 24.9, east: 121.6, north: 25.2 },
+    core_bbox: { west: 121.4, south: 25, east: 121.5, north: 25.1 },
+  },
+  sensors: { status: 'OK', sensors: [], counts: {} },
+  weather: { status: 'OK', stations: [], summary: null },
+  latest_run: run,
+  recent_runs: [],
+})
 
 const incident = {
   incident: {
@@ -121,7 +134,7 @@ vi.mock('./api', () => ({
 }))
 
 import App from './App'
-import { getRun } from './api'
+import { getLive, getRun, getRuns } from './api'
 
 const flushEffects = async () => {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
@@ -134,6 +147,8 @@ describe('App map evidence selection', () => {
   beforeEach(() => {
     mapState.handlers.clear()
     vi.clearAllMocks()
+    vi.mocked(getLive).mockResolvedValue(makeLivePayload())
+    vi.mocked(getRuns).mockResolvedValue(runs)
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -169,6 +184,40 @@ describe('App map evidence selection', () => {
 
     expect(getRun).toHaveBeenCalledWith('run-10')
     expect(container.querySelector('.replay-view')).toBeNull()
+  })
+
+  it('clears replay incidents when LIVE has no analysis run', async () => {
+    const replayRun = { ...run, run_id: 'replay-1', mode: 'REPLAY' }
+    vi.mocked(getLive).mockResolvedValue({
+      as_of_utc: '2026-09-02T13:00:00Z',
+      region: {
+        context_bbox: { west: 121.3, south: 24.9, east: 121.6, north: 25.2 },
+        core_bbox: { west: 121.4, south: 25, east: 121.5, north: 25.1 },
+      },
+      sensors: { status: 'OK', sensors: [], counts: {} },
+      weather: { status: 'OK', stations: [], summary: null },
+      latest_run: null,
+      recent_runs: [],
+    })
+    vi.mocked(getRuns).mockResolvedValue([replayRun])
+
+    await act(async () => root.render(<App />))
+    await flushEffects()
+
+    const replayButton = [...container.querySelectorAll<HTMLButtonElement>('.mode-nav button')]
+      .find((button) => button.textContent?.includes('REPLAY'))
+    await act(async () => replayButton!.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('.run-card')!.click())
+    await flushEffects()
+
+    expect(container.querySelector('.incident-row')).not.toBeNull()
+
+    const liveButton = [...container.querySelectorAll<HTMLButtonElement>('.mode-nav button')]
+      .find((button) => button.textContent?.includes('LIVE'))
+    await act(async () => liveButton!.click())
+    await flushEffects()
+
+    expect(container.querySelector('.incident-row')).toBeNull()
   })
 
   it.each([

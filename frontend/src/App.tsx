@@ -141,7 +141,21 @@ export default function App() {
   const [historicalSensors, setHistoricalSensors] = useState<Sensor[] | null>(null)
   const refresh = async () => { try { setError(null); const [liveData, runData, statusData] = await Promise.all([getLive(), getRuns(), getStatus()]); setLive(liveData); setRuns(runData); setStatus(statusData); const current = liveData.latest_run ? runData.find((run) => run.run_id === liveData.latest_run?.run_id) ?? liveData.latest_run : runData.find((run) => run.mode === 'LIVE_ANALYSIS') ?? null; if (mode === 'LIVE') setSelectedRun(current) } catch (cause) { setError(cause instanceof Error ? cause.message : 'API unavailable') } }
   useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 20000); return () => window.clearInterval(timer) }, [mode])
-  useEffect(() => { if (!selectedRun) { setHistoricalSensors(null); return }; void getRun(selectedRun.run_id).then((detail) => { setRunIncidents(runSummaries(detail)); setHistoricalSensors(selectedRun.mode === 'REPLAY' ? (detail.historical_sensors ?? []) : null) }).catch(() => undefined) }, [selectedRun])
+  useEffect(() => {
+    if (!selectedRun) {
+      setRunIncidents([])
+      setHistoricalSensors(null)
+      return
+    }
+
+    let cancelled = false
+    void getRun(selectedRun.run_id).then((detail) => {
+      if (cancelled) return
+      setRunIncidents(runSummaries(detail))
+      setHistoricalSensors(selectedRun.mode === 'REPLAY' ? (detail.historical_sensors ?? []) : null)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [selectedRun])
   useEffect(() => { if (!job?.job_id || !['queued', 'running'].includes(job.status)) return; const timer = window.setInterval(() => void getJob(job.job_id!).then((next) => { setJob({ ...next, job_id: job.job_id }); if (next.status === 'completed' && next.result) { void getRuns().then(setRuns); void getRun(next.result!.run_id).then((detail) => { const run = { run_id: detail.manifest.run_id, mode: detail.manifest.mode, diagnostic: detail.manifest.diagnostic, synthetic_validation: false, analysis_start_utc: detail.manifest.analysis_start_utc, analysis_end_utc: detail.manifest.analysis_end_utc, analysis_zone: detail.manifest.analysis_zone, event_count: detail.summary.event_count, message: detail.summary.message, warnings: detail.manifest.warnings ?? [], stage_status: detail.summary.stage_status ?? {} }; setSelectedRun(run); setRunIncidents(runSummaries(detail)); setHistoricalSensors(run.mode === 'REPLAY' ? (detail.historical_sensors ?? []) : null); setSelectedIncident(detail.incidents[0] ?? null); setMode('REPLAY'); setShowReplayPanel(false) }) } }).catch(() => undefined), 700); return () => window.clearInterval(timer) }, [job])
   const submitReplay = async (start: string, end: string, zone: string) => { try { setError(null); const created = await createAnalysis({ start, end, analysis_zone: zone, fast_preview: false }); setJob({ job_id: created.job_id, status: 'queued', stage: 'queued', progress: 0 }) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to queue replay') } }
   const selectIncident = async (id: string) => { try { const detail = await getIncident(id); setSelectedIncident(detail); setSelectedRun(detail.run); setSensor(null) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Incident unavailable') } }
