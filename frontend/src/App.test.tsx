@@ -52,6 +52,11 @@ const run = {
   stage_status: {},
 }
 
+const runs = Array.from({ length: 10 }, (_, index) => ({
+  ...run,
+  run_id: `run-${index + 1}`,
+}))
+
 const incident = {
   incident: {
     incident_id: 'incident-1',
@@ -111,11 +116,12 @@ vi.mock('./api', () => ({
     },
     incidents: [incident],
   })),
-  getRuns: vi.fn(async () => [run]),
+  getRuns: vi.fn(async () => runs),
   getStatus: vi.fn(async () => ({})),
 }))
 
 import App from './App'
+import { getRun } from './api'
 
 const flushEffects = async () => {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
@@ -127,6 +133,7 @@ describe('App map evidence selection', () => {
 
   beforeEach(() => {
     mapState.handlers.clear()
+    vi.clearAllMocks()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -135,6 +142,33 @@ describe('App map evidence selection', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+  })
+
+  it('lets users reveal and select runs after the initial eight', async () => {
+    await act(async () => root.render(<App />))
+    await flushEffects()
+
+    const replayButton = [...container.querySelectorAll<HTMLButtonElement>('.mode-nav button')]
+      .find((button) => button.textContent?.includes('REPLAY'))
+    await act(async () => replayButton!.click())
+
+    expect(container.querySelectorAll('.run-card')).toHaveLength(8)
+    const showMore = container.querySelector<HTMLButtonElement>('.run-history-toggle')
+    expect(showMore?.textContent).toBe('Show 2 more')
+    expect(showMore?.getAttribute('aria-expanded')).toBe('false')
+
+    await act(async () => showMore!.click())
+
+    expect(container.querySelectorAll('.run-card')).toHaveLength(10)
+    expect(showMore?.textContent).toBe('Show fewer')
+    expect(showMore?.getAttribute('aria-expanded')).toBe('true')
+
+    const tenthRun = container.querySelectorAll<HTMLButtonElement>('.run-card')[9]
+    await act(async () => tenthRun.click())
+    await flushEffects()
+
+    expect(getRun).toHaveBeenCalledWith('run-10')
+    expect(container.querySelector('.replay-view')).toBeNull()
   })
 
   it.each([
